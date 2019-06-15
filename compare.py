@@ -128,10 +128,10 @@ def GetFSIDocumnetInfo(sqlClient, arguments):
                                            "BT_ROUTE" : destTypes[str(document[2])],
                                            "PAGECOUNT": str(document[3])} 
     if preBatchInfo == {}:
-        print("Did not find any record in fsidocument for prebatch customerId: %s, batchId: %s" % (custId, preId))
+        print("Did not find any record in fsidocument for prebatch customerId: %s, batchId: %s" % (arguments['custId'], arguments['preId']))
         sys.exit()    
     elif postBatchInfo == {}:                                                                                
-        print("Did not find any record in fsidocument for postbatch customerId: %s, batchId: %s" % (custId, postId))
+        print("Did not find any record in fsidocument for postbatch customerId: %s, batchId: %s" % (arguments['custId'], arguments['postId']))
         sys.exit()
     else:
         return (preBatchInfo, postBatchInfo)        
@@ -1461,9 +1461,9 @@ def run(argv):
         spreadsheetId = spreadsheetURL[:spreadsheetURL.rfind("/")]
         spreadsheetId = spreadsheetId[spreadsheetId.rfind("/")+1:] 
 
-        arguments = {"custId"           : 2965,
-                     "preId"            : 13817985,
-                     "postId"           : 13817987,
+        arguments = {"custId"           : 2047,
+                     "preId"            : 13821345,
+                     "postId"           : 13821653,
                      "spreadsheetURL"   : spreadsheetURL,
                      "spreadsheetId"    : spreadsheetId}
         pprint(arguments)              
@@ -1510,7 +1510,7 @@ service = discovery.build('sheets', 'v4', credentials=creds)
 # List of properties that we never want to include in our compare
 ignoreThese = ('FILEDATE', 'FILENAME', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1', 'BILLING_ADDRESS_BEG2',
                'BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4', 'BILLING_ADDRESS_ZIP5', 'BILLING_ADDRESS_CITY',
-               'BILLING_ADDRESS_STATE', 'ROWIMG')
+               'BILLING_ADDRESS_STATE', 'ROWIMG', 'JOB_ID')
 
 
 if __name__ == "__main__":
