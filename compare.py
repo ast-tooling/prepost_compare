@@ -178,8 +178,8 @@ def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=Fals
             valueInputOption=value_input_option, body=body).execute()
         print('{0} cells updated.'.format(result.get('updatedCells')))
         # update starting position
-        startCol = startPos.split("!")[1] 
-        startPos = sheetName + '!' + filter(str.isalpha, startCol) + str(int(filter(str.isdigit, startCol)) + rowsPerUpdate)
+        startCol = startPos.split("!")[1]
+        startPos = sheetName + '!' + filter(str.isalpha, str(startCol)) + str(int(filter(str.isdigit, str(startCol))) + rowsPerUpdate)
 
 #########################
 def InitMongoClient():
