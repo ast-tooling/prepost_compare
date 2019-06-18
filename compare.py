@@ -203,7 +203,8 @@ def InitMongoClient():
     with open(roboPath) as json_file:
         connectionData = json.load(json_file)
         for connection in connectionData['connections']:
-            if connection['serverHost'] == "ssnj-immongodb01":
+            # AS_061719: update below line to check for different hosts
+            if connection['serverHost'].split('.')[0] in ("ssnj-immongodb01","ssnj-immongodb02","ssnj-immongodb03"):
                 for cred in connection['credentials']:
                     userName = cred['userName']
                     userPassword = cred['userPassword']
