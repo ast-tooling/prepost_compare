@@ -22,6 +22,7 @@ from itertools import tee
 from collections import OrderedDict
 import mysql.connector
 from base64 import b64decode
+import pyodbc
 
 def InitSQLClient():
     userName = os.getenv('username')
@@ -223,6 +224,21 @@ def InitMongoClient():
     return fsidocprops
     # END: CONNECT TO MONGO CLIENT #
     ################################
+
+    ##################################
+    #  START: CONNECT TO SQL sERVER  #
+
+def InitSqlServerConn(server='dnco-stc2bsql.billtrust.local',database='carixDataProcessing',trusted_conn_bool='yes'):
+    print('Connecting using windows auth...')
+    conn = pyodbc.connect(driver='{SQL Server}',
+                          server=server,
+                          database=database)
+    cursor = conn.cursor()
+    return cursor
+    print('Connected, cursor object returned...')
+    #   END: CONNECT TO SQL SERVER   #
+    ##################################
+
 def GetDocProps(fsidocprops, coversheetDocIds, arguments):
     # START: QUERY FOR DP #
     #######################
@@ -1490,6 +1506,13 @@ def run(argv):
         pprint(arguments)
 
     #sys.exit()
+
+    # connect to Sql Server, TODO this should be a cmd line arg
+    # setting as false, not all users have windows auth, need to add generic
+    # gmcuser creds
+    bConnToSqlServer = False
+    if bConnToSqlServer:
+        sqlServerCursor = InitSqlServerConn()
     # Get list of Coversheet FFDIds
     sqlClient = InitSQLClient()
     coversheetDocIds = GetCoversheetDocIds(sqlClient, arguments)
