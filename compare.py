@@ -192,7 +192,7 @@ def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=Fals
         startCol = startPos.split("!")[1]
         startPos = sheetName + '!' + filter(str.isalpha, str(startCol)) + str(int(filter(str.isdigit, str(startCol))) + rowsPerUpdate)
 
-#########################
+
 def InitMongoClient():
     ###############################
     # START: GET USER CREDENTIALS #
@@ -228,7 +228,7 @@ def InitMongoClient():
     ##################################
     #  START: CONNECT TO SQL sERVER  #
 
-def InitSqlServerConn(server='dnco-stc2bsql.billtrust.local',database='carixDataProcessing',trusted_conn_bool='yes'):
+def InitSqlServerClient(server='dnco-stc2bsql.billtrust.local',database='carixDataProcessing',trusted_conn_bool='yes'):
     print('Connecting using windows auth...')
     conn = pyodbc.connect(driver='{SQL Server}',
                           server=server,
@@ -277,10 +277,24 @@ def QueryMongo(coversheetDocIds):
 
     #pd.set_option('display.max_columns', 500)
 
-    prechangePropsGen = fsidocprops.find({'batchId': preId, 'customerId': custId, 'documentId': {'$nin': coversheetDocIds[0]}},
-        {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
-    postchangePropsGen = fsidocprops.find({'batchId': postId, 'customerId': custId, 'documentId': {'$nin': coversheetDocIds[1]}},
-        {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
+    prechangePropsGen = fsidocprops.find({'batchId': preId,
+                                          'customerId': custId,
+                                          'documentId': {'$nin': coversheetDocIds[0]}},
+                                         {'_id':0,
+                                          'batchId':0,
+                                          'customerId':0,
+                                          'size':0,
+                                          'seq':0,
+                                          'lockId':0})
+    postchangePropsGen = fsidocprops.find({'batchId': postId,
+                                           'customerId': custId,
+                                           'documentId': {'$nin': coversheetDocIds[1]}},
+                                          {'_id':0,
+                                           'batchId':0,
+                                           'customerId':0,
+                                           'size':0,
+                                           'seq':0,
+                                           'lockId':0})
 
     '''
     test = pd.DataFrame()
@@ -1482,7 +1496,8 @@ def SendUpdateRequests(service, requests, spreadsheetId):
 
 def run(argv):
     if len(argv) != 4:
-        print("Command line arguments not given, using values hardcoded within run() function...")
+        print("Command line arguments not given, using values hardcoded "      \
+              "within run() function...")
 
         spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1-SWPPRg2i2IsTgUA-4BvpEkMyE1TBZUvmEHZw1zpWo4/edit#gid=0'
         spreadsheetId = spreadsheetURL[:spreadsheetURL.rfind("/")]
@@ -1512,7 +1527,7 @@ def run(argv):
     # gmcuser creds
     bConnToSqlServer = False
     if bConnToSqlServer:
-        sqlServerCursor = InitSqlServerConn()
+        sqlServerCursor = InitSqlServerClient()
     # Get list of Coversheet FFDIds
     sqlClient = InitSQLClient()
     coversheetDocIds = GetCoversheetDocIds(sqlClient, arguments)
