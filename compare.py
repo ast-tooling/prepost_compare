@@ -66,8 +66,7 @@ def InitSQLClient():
     return sqlClient
 
 def decode_password(encoded):
-    print('encoded password is %s' % encoded)
-    # TODO, update '==' to check length of encoded var; should be multiple of 4
+    # print('encoded password is %s' % encoded)
     # see https://gist.github.com/perrygeo/ee7c65bb1541ff6ac770
     if len(encoded) % 4 != 0:
         if len(encoded) % 4 == 2:
@@ -164,7 +163,9 @@ def GoogleAPIAuthorization():
         # Save the credentials for the next run
         with open('token.pickle', 'wb') as token:
             pickle.dump(creds, token)
-    return creds
+        # create google api build obj to exeecute calls against
+    service = discovery.build('sheets', 'v4', credentials=creds)
+    return service
 
 # Write a single range of values out
 def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=False, value_input_option="RAW", insertDataOption="OVERWRITE"):
@@ -1552,9 +1553,8 @@ def run(argv):
 # Used to calc processing time
 startTime = time.time()
 
-# Authorize Google Sheets API credentials and build service
-creds = GoogleAPIAuthorization()
-service = discovery.build('sheets', 'v4', credentials=creds)
+# Authorize Google Sheets API credentials and build service, service obj returned
+service = GoogleAPIAuthorization()
 
 # List of properties that we never want to include in our compare
 ignoreThese = ('FILEDATE', 'FILENAME', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1', 'BILLING_ADDRESS_BEG2',
