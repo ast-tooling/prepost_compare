@@ -27,7 +27,7 @@ import pyodbc
 def InitSQLClient():
     userName = os.getenv('username')
     sqlConnFile = r"C:\\Users\\%s\\AppData\\Roaming\\SQLyog\\sqlyog.ini" % userName
-    inFile = open(sqlConnFile, 'rb')
+    inFile = open(sqlConnFile, 'rt')
     foundConnection = False
     connections = {}
     for line in inFile.readlines():
@@ -57,13 +57,19 @@ def InitSQLClient():
     # SQLyog stores passwords with base 64 encoding so we must decode it
     decodedPassword = decode_password(password)
 
-    sqlClient = mysql.connector.connect(
+    im_sqlClient = mysql.connector.connect(
         host="imdb",
         user=userName,
         passwd=decodedPassword,
         database="imstage01"
     )
-    return sqlClient
+    prod_sqlClient = mysql.connector.connect(
+        host="reportdb",
+        user=userName,
+        passwd='nF3vGBQkbtVYuRg',
+        database="prod"
+    )        
+    return im_sqlClient, prod_sqlClient
 
 def decode_password(encoded):
     print('encoded password is %s' % encoded)
@@ -89,15 +95,20 @@ def rotate_left(num, bits):
     num &= (2**bits-1)
     return num
 
-def GetCoversheetDocIds(sqlClient, arguments):
+def GetCoversheetDocIds(im_sqlClient, prod_sqlClient, arguments):
     # We want to ignore any document that was created as a coversheet
-    sqlCursor = sqlClient.cursor()
+    #if prod_sqlClient != '':
+    #    sqlCursor = prod_sqlClient.cursor()
+    #else:     
+    sqlCursor = im_sqlClient.cursor()
     # Prechange
     sqlCursor.execute("SELECT documentId FROM fsidocument WHERE customerid = %s AND batchid = %s \
                       AND (FFDId IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
                       OR FFDId = 88908)" % (arguments['custId'], arguments['preId'], arguments['custId']))
     preCoversheetDocIds = list(int(i[0]) for i in sqlCursor.fetchall()) # convert from tuple generator of Longs to Int list
+    
     # Postchange
+    sqlCursor = im_sqlClient.cursor()
     sqlCursor.execute("SELECT documentId FROM fsidocument WHERE customerid = %s AND batchid = %s \
                       AND (FFDId IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
                       OR FFDId = 88908)" % (arguments['custId'], arguments['postId'], arguments['custId']))
@@ -106,8 +117,13 @@ def GetCoversheetDocIds(sqlClient, arguments):
     coversheetDocIds = (preCoversheetDocIds, postCoversheetDocIds)
     return (coversheetDocIds)
 
-def GetFSIDocumnetInfo(sqlClient, arguments):
-    sqlCursor = sqlClient.cursor()
+def GetFSIDocumnetInfo(im_sqlClient, arguments, prod_sqlClient=''):
+
+    if prod_sqlClient != '':
+        sqlCursor = prod_sqlClient.cursor()
+    else:     
+        sqlCursor = im_sqlClient.cursor()
+
     destTypes = {"C" : "Coversheet",
                  "D" : "Print and Ebill",
                  "E" : "Ebill",
@@ -130,6 +146,7 @@ def GetFSIDocumnetInfo(sqlClient, arguments):
                                           "BT_ROUTE" : destTypes[str(document[2])],
                                           "PAGECOUNT": str(document[3])}
     # Postchange
+    sqlCursor = im_sqlClient.cursor()    
     sqlCursor.execute("SELECT documentId, FFDId, DestType, PageCount FROM fsidocument WHERE customerid = %s AND batchid = %s \
                       AND (FFDId NOT IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
                       AND FFDId != 88908)" % (arguments['custId'], arguments['postId'], arguments['custId']))
@@ -152,7 +169,7 @@ def GoogleAPIAuthorization():
     creds = None
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
+            creds = pickle.load(token, encoding='latin1')
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -189,26 +206,34 @@ def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=Fals
             valueInputOption=value_input_option, body=body).execute()
         print('{0} cells updated.'.format(result.get('updatedCells')))
         # update starting position
-        startCol = startPos.split("!")[1]
-        startPos = sheetName + '!' + filter(str.isalpha, str(startCol)) + str(int(filter(str.isdigit, str(startCol))) + rowsPerUpdate)
+        startPos = startPos.split("!")[1]
+        startCol = list(filter(str.isalpha, str(startPos)))[0]
+        startRow = str(int(list(filter(str.isdigit, str(startPos)))[0]) + rowsPerUpdate)
+        startPos = sheetName + '!' + startCol + startRow
 
 #########################
-def InitMongoClient():
+def InitMongoClient(queryProd = False):
     ###############################
     # START: GET USER CREDENTIALS #
     userName = os.getenv('username')
     userPassword = ''
-    roboPath = "C:\\Users\\%s\\.3T\\robo-3t\\1.2.1\\robo3t.json" % userName
+    roboPath = "C:\\Users\\%s\\.3T\\robo-3t\\1.3.1\\robo3t.json" % userName
 
     print ("Validating user credentials...")
-    with open(roboPath) as json_file:
-        connectionData = json.load(json_file)
-        for connection in connectionData['connections']:
-            # AS_061719: update below line to check for different hosts
-            if connection['serverHost'].split('.')[0] in ("ssnj-immongodb01","ssnj-immongodb02","ssnj-immongodb03"):
-                for cred in connection['credentials']:
-                    userName = cred['userName']
-                    userPassword = cred['userPassword']
+    try:
+        with open(roboPath) as json_file:
+            connectionData = json.load(json_file)
+            for connection in connectionData['connections']:
+                # AS_061719: update below line to check for different hosts
+                if connection['serverHost'].split('.')[0] in ("ssnj-immongodb01","ssnj-immongodb02","ssnj-immongodb03"):
+                    for cred in connection['credentials']:
+                        userName = cred['userName']
+                        userPassword = cred['userPassword']
+    except:
+        userName = "cweakley"
+        userPassword = "vn6oCdWK"
+
+
     # END: GET USER CREDENTIALS #
     #############################
 
@@ -220,8 +245,18 @@ def InitMongoClient():
                                             password = userPassword,
                                             authSource = 'docpropsdb',
                                             authMechanism = 'SCRAM-SHA-1')
-    fsidocprops = imsMongoClient.docpropsdb.fsidocprops
-    return fsidocprops
+    im_fsidocprops = imsMongoClient.docpropsdb.fsidocprops
+
+    prod_fsidocprops = None 
+    if queryProd:
+        prodMongoClient = MongoClient(["prmreportdb01:10001"],
+                                                userName = userName,
+                                                password = 'gEvSnvCy',
+                                                authSource = 'docpropsdb',
+                                                authMechanism = 'SCRAM-SHA-1')
+        prod_fsidocprops = prodMongoClient.docpropsdb.fsidocprops
+    return im_fsidocprops, prod_fsidocprops
+
     # END: CONNECT TO MONGO CLIENT #
     ################################
 
@@ -239,7 +274,7 @@ def InitSqlServerConn(server='dnco-stc2bsql.billtrust.local',database='carixData
     #   END: CONNECT TO SQL SERVER   #
     ##################################
 
-def GetDocProps(fsidocprops, coversheetDocIds, arguments):
+def GetDocProps(im_fsidocprops, coversheetDocIds, arguments, prod_fsidocprops=''):
     # START: QUERY FOR DP #
     #######################
     #preId = int(app.getEntry('ePrechangeId'))
@@ -248,7 +283,12 @@ def GetDocProps(fsidocprops, coversheetDocIds, arguments):
     print("Time Elapsed: %s" % (time.time() - startTime))
     print("Querying for prechange and postchange doc props...")
 
+    #if prod_fsidocprops != '' or prod_fsidocprops is not None:
+    #    fsidocprops = prod_fsidocprops
+    #else:
+    fsidocprops = im_fsidocprops    
     prechangeProps = fsidocprops.find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[0]}})
+    #fsidocprops = im_fsidocprops
     postchangeProps = fsidocprops.find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[1]}})
     print("Query successful...")
     prechangeProps = list(prechangeProps)
@@ -265,8 +305,8 @@ def GetDocProps(fsidocprops, coversheetDocIds, arguments):
     return(prechangeProps, postchangeProps)
 
 # Was going to try out Pandas with this function but then I got lazy
-def QueryMongo(coversheetDocIds):
-    fsidocprops = InitMongoClient()
+def QueryMongo(coversheetDocIds, fsidocprops, arguments):
+    #fsidocprops = InitMongoClient()
     # START: QUERY FOR DP #
     #######################
     #preId = int(app.getEntry('ePrechangeId'))
@@ -277,9 +317,9 @@ def QueryMongo(coversheetDocIds):
 
     #pd.set_option('display.max_columns', 500)
 
-    prechangePropsGen = fsidocprops.find({'batchId': preId, 'customerId': custId, 'documentId': {'$nin': coversheetDocIds[0]}},
+    prechangePropsGen = fsidocprops.find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[0]}},
         {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
-    postchangePropsGen = fsidocprops.find({'batchId': postId, 'customerId': custId, 'documentId': {'$nin': coversheetDocIds[1]}},
+    postchangePropsGen = fsidocprops.find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[1]}},
         {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
 
     '''
@@ -308,13 +348,14 @@ def QueryMongo(coversheetDocIds):
     #print(prechangeProps)
     # END: QUERY FOR DP #
     #####################
-    print("Query finished... CustomerId: %s  Prechange: %s  Postchange: %s" % (str(custId), str(preId), str(postId)))
+    print("Query finished... CustomerId: %s  Prechange: %s  Postchange: %s" % (arguments['custId'], arguments['preId'], arguments['postId']))
     print("Time Elapsed: %s" % (time.time() - startTime))
 
+    return(prechangePropsGen, postchangePropsGen)
     #sys.exit()
     #################
     # TEST FUNCTION #
-    MergeToDataFrame(prechangePropsGen, postchangePropsGen)
+    #MergeToDataFrame(prechangePropsGen, postchangePropsGen)
 
 def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo):
     print("Starting MergerBatchData...")
@@ -326,7 +367,7 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
             for prop in document.get('properties'):
                 docPropName = prop.get('k')
                 if docPropName: # Do not add columnar properties or special biscuit generated properties.. XML_DATA was causing a failure
-                    if not docPropName.endswith("_COL") and docPropName not in ignoreThese:
+                    if not docPropName.endswith("_COL") and docPropName not in ignoreTheseDocProps:
                         if docPropName not in docPropLabels:
                             docPropLabels.append(str(docPropName))
 
@@ -368,8 +409,8 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
     count = 0
     # These are the doc props that will be used as a unique key to match up pre/post documents
     # In the future this should be defaulted to acc num and inv num with the option for user override
-    #propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER"]
-    propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER", "TOTAL_DUE", "FFDID", "BT_ROUTE"]
+    #propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER"]  "PO_NUMBER", "BT_ROUTE", "TOTAL_DUE"
+    propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER", "FFDID", "FILENAME", "TOTAL_DUE"]
     for document in prechangeProps:
         # Get master key before starting
         masterKey = []
@@ -379,7 +420,10 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
             else:
                 for docProp in document.get('properties'):
                     if prop == docProp.get('k'):
-                        masterKey.append(docProp.get('v'))
+                        if prop == "FILENAME":
+                            masterKey.append(docProp.get('v').split("\\")[-1])
+                        else:        
+                            masterKey.append(docProp.get('v'))
         #print(masterKey)
         masterKey = '~'.join(masterKey)
         count += 1
@@ -411,7 +455,10 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
                     for prop in document.get('properties'):
                         propName = prop.get('k')
                         if propName == docPropLabel:
-                            tempPropValues[0] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
+                            if propName == "FILENAME":
+                                tempPropValues[0] = prop.get('v').replace('<BR>', '\n')[:5000].split("\\")[-1]
+                            else:   
+                                tempPropValues[0] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
                             break
                 masterPropList[masterKey].append(tempPropValues)
         # END PRECHANGE PROPS
@@ -428,7 +475,10 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
             else:
                 for docProp in document.get('properties'):
                     if prop == docProp.get('k'):
-                        masterKey.append(docProp.get('v'))
+                        if prop == "FILENAME":
+                            masterKey.append(docProp.get('v').split("\\")[-1])
+                        else:        
+                            masterKey.append(docProp.get('v'))                        
         masterKey = '~'.join(masterKey)
 
         # Exit if we were not able to find either account number or invoice number
@@ -453,7 +503,10 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
                 for prop in document.get('properties'):
                     propName = prop.get('k')
                     if propName == docPropLabel:
-                        masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
+                        if propName == "FILENAME":
+                            masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000].split("\\")[-1] 
+                        else:    
+                            masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
                         break
 
         if misMatchCount > ((len(prechangeProps) + len(postchangeProps)) / 4) \
@@ -467,16 +520,19 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
 
     return(docPropLabels, masterPropList, misMatchCount, len(prechangeProps), len(postchangeProps))
 
-def MergeToDataFrame(prechangePropsGen, postchangePropsGen):
+def MergeToDataFrame(prechangePropsGen, postchangePropsGen, preBatchInfo, postBatchInfo, arguments):
     print("Starting MergeToDataFrame...")
     fsiDocumentProps = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
-    #docPropLabels = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
+    docPropLabels = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
 
     prechangeProps = {}
     postchangeProps = {}
+    batchData = {"preBatchCount": 0,
+                 "postBatchCount": 0,
+                 "fileList": set(),}
+    fileList = {}             
     # Add all doc props from our prechange and postchange batches to a list of doc prop names
     isPrechangeLoop = True
-    prependToKey = "0~"
     for batch in (prechangePropsGen, postchangePropsGen):
         # Doc props can be split across multiple mongo Objects, this means documentId cannot be used as a unique identifier
         # Here we remove and combine these split db objects and add them back into our original list
@@ -484,37 +540,33 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen):
         splitObjects = {} # keep track of documents that are split across multiplie mongo objects
         for document in batch:
             isSplitObject = False
-            # These are the doc props that will be used as a unique key to match up pre/post documents
-            # In the future this should be defaulted to acc num and inv num with the option for user override
-            propKeys = OrderedDict([("ACCOUNT_NUMBER",''), ("INVOICE_NUMBER",''), ("FFDID",''), ("BT_ROUTE",''), ('DUPLICATE_FLAG','')])
-            #propKeys = ["SHIP_TO_CUST_NUM", "BILL_TO_CUST_NUM", "INVOICE_NUMBER", "TOTAL_DUE", "FFDID", "DUPLICATE_FLAG"]
-
             docProps = {} # used to temp store our docProp label and values
             docId = str(document.get('documentId'))
             docProps['DOCUMENTID'] = docId
 
-            for prop in document.get('properties'):
-                docPropName = prop.get('k')
-                if docPropName: # Do not add columnar properties or special biscuit generated properties.. XML_DATA was causing a failure
-                    if not docPropName.endswith("_COL") and docPropName not in ignoreThese:
-                        docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]
+            # Keep track of how many documents are in each batch
+            if isPrechangeLoop:
+                batchData["preBatchCount"] += 1
+            else:
+                batchData["postBatchCount"] += 1    
 
-                        # build masterKey
-                        if docPropName in propKeys:
-                            propKeys[docPropName] = prop.get('v')
+            for prop in document.get('properties'):
+                docPropName = prop.get('k').strip()
+                if docPropName: # Do not add columnar properties or special biscuit generated properties.. XML_DATA was causing a failure
+                    if "s" in prop: # Once we find the first columnar property we can break 
+                        #print("Found first col prop, breaking properties loop at: %s, Line: %s" % (docPropName, prop.get('s')))
+                        break
+                    elif docPropName not in ignoreTheseDocProps:
+                        if docPropName == "FILENAME":
+                            docProps[docPropName] = prop.get('v').split("\\")[-1]  # only grab the file name and not the full path
+                            batchData["fileList"].add(docProps[docPropName])
+                        else:   
+                            docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]
+                        # Create a list of all unique doc prop names across both pre and post
+                        if docPropName not in docPropLabels:
+                            docPropLabels.append(str(docPropName))
             # Add our fsiDocument values
             for docPropName in fsiDocumentProps:
-                # build masterKey
-                if docPropName in propKeys:
-                    if isPrechangeLoop:
-                        propKeys[docPropName] = preBatchInfo[docId][docPropName]
-                    else:
-                        try:
-                            propKeys[docPropName] = postBatchInfo[docId][docPropName]
-                        except:
-                            print(propKeys[docPropName])
-                            print(docId)
-
                 if isPrechangeLoop:
                     docProps[docPropName] = preBatchInfo[docId][docPropName]
                 else:
@@ -524,62 +576,116 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen):
             if document.get('pages') > 1:
                 if docId not in splitObjects:
                     splitObjects[docId] = docProps
-                else:
-                    splitObjects[docId].extend(docProps)
-            else: # only create masterKey and add document once it is fully formed
-                masterKey = '~'.join(propKeys.values()) + prependToKey
-                docProps['9999_MASTER_KEY_9999'] = masterKey
+                else: 
+                    splitObjects[docId].update(docProps)
+                    # Each time we find a split doc we need to subtract one from our total doc count  
                 if isPrechangeLoop:
-                    if masterKey in prechangeProps:
-                        print("Duplicate masterKey found in prechange props.")
-                        sys.exit()
-                    prechangeProps[masterKey] = docProps
+                    batchData["preBatchCount"] -= 1
                 else:
-                    if masterKey in postchangeProps:
-                        print("Duplicate masterKey found in postchange props.")
-                        sys.exit()
-                    postchangeProps[masterKey] = docProps
+                    batchData["postBatchCount"] -= 1  
+            else:
+                # Add to our OrderedDict with filename and docid as the key which can be used to properly sort objects
+                if isPrechangeLoop:
+                    if docProps['FILENAME'] in prechangeProps:
+                        prechangeProps[docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
+                    else:
+                        prechangeProps[docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}        
+                else:
+                    if docProps['FILENAME'] in postchangeProps:
+                        postchangeProps[docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
+                    else:    
+                        postchangeProps[docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}
 
         # clean up our splitObjects
-        for document in splitObjects:
-            propKeys = OrderedDict([("ACCOUNT_NUMBER",''), ("INVOICE_NUMBER",''), ("FFDID",''), ("BT_ROUTE",'')])
-            for prop in document:
-                if prop in propKeys:
-                    propKeys[prop] = document[prop]
-            masterKey = '~'.join(propKeys.values()) + prependToKey
-            document['9999_MASTER_KEY_9999'] = masterKey
+        for documentId in splitObjects:
             if isPrechangeLoop:
-                if masterKey in prechangeProps:
-                    print("Duplicate masterKey found in prechange props.")
-                    sys.exit()
-                prechangeProps[masterKey] = docProps
+                if splitObjects[documentId]['FILENAME'] in prechangeProps:
+                    prechangeProps[splitObjects[documentId]['FILENAME']].update({documentId:splitObjects[documentId]})
+                else:
+                    prechangeProps[splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
             else:
-                if masterKey in postchangeProps:
-                    print("Duplicate masterKey found in postchange props.")
-                    sys.exit()
-                postchangeProps[masterKey] = docProps
+                if splitObjects[documentId]['FILENAME'] in postchangeProps:
+                    postchangeProps[splitObjects[documentId]['FILENAME']].update({documentId:splitObjects[documentId]})
+                else:     
+                    postchangeProps[splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
 
         isPrechangeLoop = False
-        prependToKey = "1~"
 
-    #for document in prechangeProps.values():
-    #    print (document)
-    #sys.exit()
 
-    prechangeDf = pd.DataFrame(prechangeProps.values())
-    postchangeDf = pd.DataFrame(postchangeProps.values())
-    masterPropDf = pd.concat([prechangeDf, postchangeDf], ignore_index=True)
-    #.set_index('9999_MASTER_KEY_9999')
+    # Sort the labels and add DOCUMENTID, ACCOUNT_NUMBER and INVOICE_NUMBER to the front
+    docPropLabels.sort()
+    props = ["BT_ROUTE", "INVOICE_NUMBER", "ACCOUNT_NUMBER"]
+    for prop in props:
+        if prop in docPropLabels:
+            docPropLabels.remove(prop)
+            docPropLabels.insert(0, prop)
+    docPropLabels.insert(0, "")
+    docPropLabels.insert(0, "DOCUMENTID")
 
-    pd.set_option('display.max_rows', 500)
-    pd.set_option('display.max_columns', 500)
-    pd.set_option('display.width', 1000)
-    masterPropDf = masterPropDf.sort_values(by=['9999_MASTER_KEY_9999'])
+
+    # Time to create our masterPropList which should be a 2d array structured exactly how our data will appear as a table in gsheets
+    masterPropList = []
+    i = 1
+    for fileName in prechangeProps:
+        #print("length of prechange docs: " + str(len(prechangeProps[fileName])))
+        for docId in sorted(prechangeProps[fileName].keys()):
+            propList = []
+            for docPropLabel in docPropLabels:
+                if docPropLabel in prechangeProps[fileName][docId]:
+                    propList.append(prechangeProps[fileName][docId][docPropLabel])
+                else:
+                    propList.append("")
+            masterPropList.extend([propList, []])
+        if fileName in postchangeProps:
+            #print("length of postchange docs: " + str(len(postchangeProps[fileName])))
+            for docId in sorted(postchangeProps[fileName].keys()):
+                propList = []
+                for docPropLabel in docPropLabels:
+                    if docPropLabel in postchangeProps[fileName][docId]:
+                        propList.append(postchangeProps[fileName][docId][docPropLabel])
+                    else:
+                        propList.append("")       
+                masterPropList[i] = propList
+                i += 2
+
+    for fileName in postchangeProps:
+        if fileName not in prechangeProps:
+            #masterPropList.extend([[],[]])
+            print(len(masterPropList))
+            for docId in sorted(postchangeProps[fileName].keys()):
+                propList = []
+                for docPropLabel in docPropLabels:
+                    if docPropLabel in postchangeProps[fileName][docId]:
+                        propList.append(postchangeProps[fileName][docId][docPropLabel])
+                    else:
+                        propList.append("")
+                print(i)               
+                masterPropList.extend([[],propList])
+                #i += 2                        
+
+    #for line in masterPropList:
+    #    for s in line:
+    #        print(s)
+    #    sys.exit()                                        
+    spreadSheetId = arguments['spreadsheetId']            
+    UpdateSingleRange(masterPropList, "B2", "DP COMPARE 6", spreadSheetId)            
+
+
+    sys.exit()
+
+    return (docPropLabels, masterPropList, 0, numOfPreDocs, numOfPostDocs)
+
+    ### PANDAS BULLSHIT ###
+    #prechangeDf = pd.DataFrame(prechangeProps.values())
+    #postchangeDf = pd.DataFrame(postchangeProps.values())
+    #masterPropDf = pd.concat([prechangeDf, postchangeDf], ignore_index=True)
+
+    #pd.set_option('display.max_rows', 500)
+    #pd.set_option('display.max_columns', 500)
+    #pd.set_option('display.width', 1000)
+    #masterPropDf = masterPropDf.sort_values(by=['9999_MASTER_KEY_9999'])
     #print(masterPropDf.columns)
-
-    #sys.exit()
-
-    CreateCompareTab(masterPropDf)
+    ### PANDAS BULLSHIT ###
 
 def CreateCompareTab(masterPropDf):
 
@@ -793,7 +899,7 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
     startColIndex = 2
     currentColIndex = 2
     #
-    endColIndex = startColIndex + len(masterPropList[masterPropList.keys()[0]]) - 1 # subract 1 because we dont include docid or pre/post number
+    endColIndex = startColIndex + len(masterPropList[list(masterPropList.keys())[0]]) - 1 # subract 1 because we dont include docid or pre/post number
     colIndexes = range(startColIndex, endColIndex+1) #keep track of columns labels that have already turned red due to mismatch
 
     print ("Setting column widths...")
@@ -1406,7 +1512,7 @@ def AddCompareSheet(rowCount, spreadsheetId):
         sheetName = str(sheet.get('properties').get('title'))
         if "DP COMPARE" in sheetName:
             if sheetName.split(" ")[-1].isdigit():
-                sheetNumbers.append(int(filter(str.isdigit, sheetName)))
+                sheetNumbers.append(int(sheetName.split(" ")[-1]))
     newSheetNumber = max(sheetNumbers) + 1
     title = "DP COMPARE %d" % newSheetNumber
     print("New sheet name: %s" % title)
@@ -1484,13 +1590,13 @@ def run(argv):
     if len(argv) != 4:
         print("Command line arguments not given, using values hardcoded within run() function...")
 
-        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1-SWPPRg2i2IsTgUA-4BvpEkMyE1TBZUvmEHZw1zpWo4/edit#gid=0'
+        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1-SWPPRg2i2IsTgUA-4BvpEkMyE1TBZUvmEHZw1zpWo4/edit?usp=drive_web&ouid=116956695434029002425'
         spreadsheetId = spreadsheetURL[:spreadsheetURL.rfind("/")]
         spreadsheetId = spreadsheetId[spreadsheetId.rfind("/")+1:]
 
-        arguments = {"custId"           : 2047,
-                     "preId"            : 13821345,
-                     "postId"           : 13821653,
+        arguments = {"custId"           : 961,
+                     "preId"            : 13847185,
+                     "postId"           : 13847315,
                      "spreadsheetURL"   : spreadsheetURL,
                      "spreadsheetId"    : spreadsheetId}
         pprint(arguments)
@@ -1514,21 +1620,22 @@ def run(argv):
     if bConnToSqlServer:
         sqlServerCursor = InitSqlServerConn()
     # Get list of Coversheet FFDIds
-    sqlClient = InitSQLClient()
-    coversheetDocIds = GetCoversheetDocIds(sqlClient, arguments)
+    im_sqlClient, prod_sqlClient = InitSQLClient()
+    coversheetDocIds = GetCoversheetDocIds(im_sqlClient, prod_sqlClient, arguments )
 
     # Get ffdid, routing and pagecount from fsidocument, returns two lists of dicts, a prechange and postchange
-    fsiDocumentInfo = GetFSIDocumnetInfo(sqlClient, arguments)
+    fsiDocumentInfo = GetFSIDocumnetInfo(im_sqlClient, arguments)
 
     # Init mongo client, returns the fsidocprops collection to query against
-    fsidocprops = InitMongoClient()
+    im_fsidocprops, prod_fsidocprops = InitMongoClient(queryProd=False)
 
     # Get list of doc prop names from prechange and postchange excluding coversheets
-    prePostDocProps = GetDocProps(fsidocprops, coversheetDocIds, arguments)
-    #labels = QueryMongo(coversheetDocIds)
+    prePostDocProps = GetDocProps(im_fsidocprops, coversheetDocIds, arguments)
+    #prePostDocProps = QueryMongo(coversheetDocIds, fsidocprops, arguments)
 
     # Merge pre and post batches, returns list = [docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs]
     mergedData = MergeBatchData(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo[0], fsiDocumentInfo[1])
+    #mergedData = MergeToDataFrame(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo[0], fsiDocumentInfo[1], arguments)
 
     # Add all information to our google sheet and format cells accordingly
     CreateDPCompareTab(mergedData[0], mergedData[1], mergedData[2], mergedData[3], mergedData[4], arguments)
@@ -1542,7 +1649,7 @@ creds = GoogleAPIAuthorization()
 service = discovery.build('sheets', 'v4', credentials=creds)
 
 # List of properties that we never want to include in our compare
-ignoreThese = ('FILEDATE', 'FILENAME', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1', 'BILLING_ADDRESS_BEG2',
+ignoreTheseDocProps = ('FILEDATE', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1', 'BILLING_ADDRESS_BEG2',
                'BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4', 'BILLING_ADDRESS_ZIP5', 'BILLING_ADDRESS_CITY',
                'BILLING_ADDRESS_STATE', 'ROWIMG', 'JOB_ID')
 
