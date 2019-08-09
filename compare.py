@@ -72,8 +72,7 @@ def InitSQLClient():
     return im_sqlClient, prod_sqlClient
 
 def decode_password(encoded):
-    print('encoded password is %s' % encoded)
-    # TODO, update '==' to check length of encoded var; should be multiple of 4
+    # print('encoded password is %s' % encoded)
     # see https://gist.github.com/perrygeo/ee7c65bb1541ff6ac770
     if len(encoded) % 4 != 0:
         if len(encoded) % 4 == 2:
@@ -181,7 +180,9 @@ def GoogleAPIAuthorization():
         # Save the credentials for the next run
         with open('token.pickle', 'wb') as token:
             pickle.dump(creds, token)
-    return creds
+        # create google api build obj to exeecute calls against
+    service = discovery.build('sheets', 'v4', credentials=creds)
+    return service
 
 # Write a single range of values out
 def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=False, value_input_option="RAW", insertDataOption="OVERWRITE"):
@@ -211,8 +212,13 @@ def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=Fals
         startRow = str(int(list(filter(str.isdigit, str(startPos)))[0]) + rowsPerUpdate)
         startPos = sheetName + '!' + startCol + startRow
 
+<<<<<<< HEAD
 #########################
 def InitMongoClient(queryProd = False):
+=======
+
+def InitMongoClient():
+>>>>>>> da03421a5423574cb3d732bf8c2094eff7920f91
     ###############################
     # START: GET USER CREDENTIALS #
     userName = os.getenv('username')
@@ -263,7 +269,7 @@ def InitMongoClient(queryProd = False):
     ##################################
     #  START: CONNECT TO SQL sERVER  #
 
-def InitSqlServerConn(server='dnco-stc2bsql.billtrust.local',database='carixDataProcessing',trusted_conn_bool='yes'):
+def InitSqlServerClient(server='dnco-stc2bsql.billtrust.local',database='carixDataProcessing',trusted_conn_bool='yes'):
     print('Connecting using windows auth...')
     conn = pyodbc.connect(driver='{SQL Server}',
                           server=server,
@@ -317,10 +323,31 @@ def QueryMongo(coversheetDocIds, fsidocprops, arguments):
 
     #pd.set_option('display.max_columns', 500)
 
+<<<<<<< HEAD
     prechangePropsGen = fsidocprops.find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[0]}},
         {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
     postchangePropsGen = fsidocprops.find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[1]}},
         {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
+=======
+    prechangePropsGen = fsidocprops.find({'batchId': preId,
+                                          'customerId': custId,
+                                          'documentId': {'$nin': coversheetDocIds[0]}},
+                                         {'_id':0,
+                                          'batchId':0,
+                                          'customerId':0,
+                                          'size':0,
+                                          'seq':0,
+                                          'lockId':0})
+    postchangePropsGen = fsidocprops.find({'batchId': postId,
+                                           'customerId': custId,
+                                           'documentId': {'$nin': coversheetDocIds[1]}},
+                                          {'_id':0,
+                                           'batchId':0,
+                                           'customerId':0,
+                                           'size':0,
+                                           'seq':0,
+                                           'lockId':0})
+>>>>>>> da03421a5423574cb3d732bf8c2094eff7920f91
 
     '''
     test = pd.DataFrame()
@@ -1588,7 +1615,8 @@ def SendUpdateRequests(service, requests, spreadsheetId):
 
 def run(argv):
     if len(argv) != 4:
-        print("Command line arguments not given, using values hardcoded within run() function...")
+        print("Command line arguments not given, using values hardcoded "      \
+              "within run() function...")
 
         spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1-SWPPRg2i2IsTgUA-4BvpEkMyE1TBZUvmEHZw1zpWo4/edit?usp=drive_web&ouid=116956695434029002425'
         spreadsheetId = spreadsheetURL[:spreadsheetURL.rfind("/")]
@@ -1618,7 +1646,7 @@ def run(argv):
     # gmcuser creds
     bConnToSqlServer = False
     if bConnToSqlServer:
-        sqlServerCursor = InitSqlServerConn()
+        sqlServerCursor = InitSqlServerClient()
     # Get list of Coversheet FFDIds
     im_sqlClient, prod_sqlClient = InitSQLClient()
     coversheetDocIds = GetCoversheetDocIds(im_sqlClient, prod_sqlClient, arguments )
@@ -1644,9 +1672,8 @@ def run(argv):
 # Used to calc processing time
 startTime = time.time()
 
-# Authorize Google Sheets API credentials and build service
-creds = GoogleAPIAuthorization()
-service = discovery.build('sheets', 'v4', credentials=creds)
+# Authorize Google Sheets API credentials and build service, service obj returned
+service = GoogleAPIAuthorization()
 
 # List of properties that we never want to include in our compare
 ignoreTheseDocProps = ('FILEDATE', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1', 'BILLING_ADDRESS_BEG2',
