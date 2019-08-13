@@ -24,11 +24,24 @@ class PrePostComp(object):
             self.spreadsheetUrl = ''
             self.spreadsheetId = ''
 
+        # more optional params that will need a default value, this may
+        # be a bad way to go about this, should we just add a dict of
+        # default values as the instance variable instead of the individual params?
+        optionalParams = {  'preEnv'  : "imdb",
+                            'postEnv' : "imdb",}
+        for param in optionalParams.keys():
+            if param in kwargs:
+                setattr(self, param, kwargs[param])
+            else:
+                setattr(self, parm, optionalParams[param])                              
+
         # create arguments dict to pass to funcs
         self.arguments = {
             "custId"        : self.csrId,
             "preId"         : self.prechangeId,
+            "preEnv"        : self.preEnv,
             "postId"        : self.postchangeId,
+            "postEnv"       : self.postEnv,
             "spreadsheetURL": self.spreadsheetUrl,
             "spreadSheetId" : self.spreadsheetId,
         }

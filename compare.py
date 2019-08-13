@@ -57,19 +57,83 @@ def InitSQLClient():
     # SQLyog stores passwords with base 64 encoding so we must decode it
     decodedPassword = decode_password(password)
 
-    im_sqlClient = mysql.connector.connect(
+    imdb_mysqlClient = mysql.connector.connect(
         host="imdb",
         user=userName,
         passwd=decodedPassword,
         database="imstage01"
     )
-    prod_sqlClient = mysql.connector.connect(
+    reportdb_mysqlClient = mysql.connector.connect(
         host="reportdb",
         user=userName,
-        passwd='nF3vGBQkbtVYuRg',
+        passwd=decodedPassword,
         database="prod"
-    )        
-    return im_sqlClient, prod_sqlClient
+    )
+    mysqlClient =  {"imdb"      : imdb_mysqlClient,
+                    "reportdb"  : reportdb_mysqlClient}        
+    return mysqlClient
+
+def InitMongoClient():
+    ###############################
+    # START: GET USER CREDENTIALS #
+    userName = os.getenv('username')
+    userPassword = ''
+    roboPath = "C:\\Users\\%s\\.3T\\robo-3t\\1.3.1\\robo3t.json" % userName
+
+    print ("Validating user credentials...")
+    try:
+        with open(roboPath) as json_file:
+            connectionData = json.load(json_file)
+            for connection in connectionData['connections']:
+                # AS_061719: update below line to check for different hosts
+                if connection['serverHost'].split('.')[0] in ("ssnj-immongodb01","ssnj-immongodb02","ssnj-immongodb03"):
+                    for cred in connection['credentials']:
+                        userName = cred['userName']
+                        userPassword = cred['userPassword']
+    except:
+        userName = "cweakley"
+        userPassword = "vn6oCdWK"
+    # END: GET USER CREDENTIALS #
+    #############################
+
+    ##################################
+    # START: CONNECT TO MONGO CLIENT #
+    print ("Connecting to mongo client...")
+    imdb_MongoClient = MongoClient(["ssnj-immongodb01:10001", "ssnj-immongodb02:10001", "ssnj-immongodb03:10001"],
+                                            userName = userName,
+                                            password = userPassword,
+                                            authSource = 'docpropsdb',
+                                            authMechanism = 'SCRAM-SHA-1')
+    imdb_fsidocprops = imdb_MongoClient.docpropsdb.fsidocprops
+
+    reportdb_MongoClient = MongoClient(["prmreportdb01:10001"],
+                                            userName = userName,
+                                            password = 'gEvSnvCy',
+                                            authSource = 'docpropsdb',
+                                            authMechanism = 'SCRAM-SHA-1')
+    reportdb_fsidocprops = reportdb_MongoClient.docpropsdb.fsidocprops
+
+    fsidocprops =  {"imdb"      : imdb_fsidocprops,
+                    "reportdb"  : reportdb_fsidocprops} 
+                    
+    return fsidocprops
+
+    # END: CONNECT TO MONGO CLIENT #
+    ################################
+
+    ##################################
+    #  START: CONNECT TO SQL SERVER  #
+
+def InitSqlServerConn(server='dnco-stc2bsql.billtrust.local',database='carixDataProcessing',trusted_conn_bool='yes'):
+    print('Connecting using windows auth...')
+    conn = pyodbc.connect(driver='{SQL Server}',
+                          server=server,
+                          database=database)
+    cursor = conn.cursor()
+    return cursor
+    print('Connected, cursor object returned...')
+    #   END: CONNECT TO SQL SERVER   #
+    ##################################
 
 def decode_password(encoded):
     print('encoded password is %s' % encoded)
@@ -95,34 +159,23 @@ def rotate_left(num, bits):
     num &= (2**bits-1)
     return num
 
-def GetCoversheetDocIds(im_sqlClient, prod_sqlClient, arguments):
-    # We want to ignore any document that was created as a coversheet
-    #if prod_sqlClient != '':
-    #    sqlCursor = prod_sqlClient.cursor()
-    #else:     
-    sqlCursor = im_sqlClient.cursor()
-    # Prechange
-    sqlCursor.execute("SELECT documentId FROM fsidocument WHERE customerid = %s AND batchid = %s \
-                      AND (FFDId IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
-                      OR FFDId = 88908)" % (arguments['custId'], arguments['preId'], arguments['custId']))
-    preCoversheetDocIds = list(int(i[0]) for i in sqlCursor.fetchall()) # convert from tuple generator of Longs to Int list
-    
-    # Postchange
-    sqlCursor = im_sqlClient.cursor()
-    sqlCursor.execute("SELECT documentId FROM fsidocument WHERE customerid = %s AND batchid = %s \
-                      AND (FFDId IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
-                      OR FFDId = 88908)" % (arguments['custId'], arguments['postId'], arguments['custId']))
-    postCoversheetDocIds = list(int(i[0]) for i in sqlCursor.fetchall()) # convert from tuple generator of Longs to Int list
-    #print(len(preCoversheetDocIds))
-    coversheetDocIds = (preCoversheetDocIds, postCoversheetDocIds)
+def GetCoversheetDocIds(mysqlClient, arguments):
+    # We want to ignore any document that was created as a coversheet    
+    coversheetDocIds = {}
+    preOrPost = "prechange"
+    for args in ((arguments['preId'], arguments['preEnv']), (arguments['postId'], arguments['postEnv'])):
+        mysqlCursor = mysqlClient[args[1]].cursor()
+        mysqlCursor.execute("SELECT documentId FROM fsidocument WHERE customerid = %s AND batchid = %s \
+                          AND (FFDId IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
+                          OR FFDId = 88908)" % (arguments['custId'], args[0], arguments['custId']))
+        # convert from tuple generator of Longs to Int list
+        # TODO - would it be better to pass the cursor around until we need to access the results to prevent memory limits?
+        coversheetDocIds[preOrPost] = list(int(i[0]) for i in mysqlCursor.fetchall())
+        preOrPost = "postchange"
+
     return (coversheetDocIds)
 
-def GetFSIDocumnetInfo(im_sqlClient, arguments, prod_sqlClient=''):
-
-    if prod_sqlClient != '':
-        sqlCursor = prod_sqlClient.cursor()
-    else:     
-        sqlCursor = im_sqlClient.cursor()
+def GetFSIDocumnetInfo(mysqlClient, arguments):
 
     destTypes = {"C" : "Coversheet",
                  "D" : "Print and Ebill",
@@ -136,33 +189,31 @@ def GetFSIDocumnetInfo(im_sqlClient, arguments, prod_sqlClient=''):
                  "T" : "Pull - T",
                  "V" : "Email",
                  "X" : "Fax"}
-    # Prechange
-    sqlCursor.execute("SELECT documentId, FFDId, DestType, PageCount FROM fsidocument WHERE customerid = %s AND batchid = %s \
-                      AND (FFDId NOT IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
-                      AND FFDId != 88908)" % (arguments['custId'], arguments['preId'], arguments['custId']))
-    preBatchInfo = {}
-    for document in sqlCursor.fetchall():
-        preBatchInfo[str(document[0])] = {"FFDID"    : str(document[1]),
-                                          "BT_ROUTE" : destTypes[str(document[2])],
-                                          "PAGECOUNT": str(document[3])}
-    # Postchange
-    sqlCursor = im_sqlClient.cursor()    
-    sqlCursor.execute("SELECT documentId, FFDId, DestType, PageCount FROM fsidocument WHERE customerid = %s AND batchid = %s \
-                      AND (FFDId NOT IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
-                      AND FFDId != 88908)" % (arguments['custId'], arguments['postId'], arguments['custId']))
-    postBatchInfo = {}
-    for document in sqlCursor.fetchall():
-        postBatchInfo[str(document[0])] = {"FFDID"    : str(document[1]),
-                                           "BT_ROUTE" : destTypes[str(document[2])],
-                                           "PAGECOUNT": str(document[3])}
-    if preBatchInfo == {}:
-        print("Did not find any record in fsidocument for prebatch customerId: %s, batchId: %s" % (arguments['custId'], arguments['preId']))
-        sys.exit()
-    elif postBatchInfo == {}:
-        print("Did not find any record in fsidocument for postbatch customerId: %s, batchId: %s" % (arguments['custId'], arguments['postId']))
-        sys.exit()
-    else:
-        return (preBatchInfo, postBatchInfo)
+
+    fsiDocumentInfo = {}
+    preOrPost = "prechange" 
+
+    for args in ((arguments['preId'], arguments['preEnv']), (arguments['postId'], arguments['postEnv'])):
+
+        mysqlCursor = mysqlClient[args[1]].cursor()
+        mysqlCursor.execute("SELECT documentId, FFDId, DestType, PageCount FROM fsidocument WHERE customerid = %s AND batchid = %s \
+                          AND (FFDId NOT IN (SELECT FFDId FROM fsiFFD WHERE customerId = %s AND itemType = 'O') \
+                          AND FFDId != 88908)" % (arguments['custId'], args[0], arguments['custId']))
+
+        batchInfo = {}
+        # TODO - would it be better to pass the cursor around until we need to access the results to prevent memory limits?
+        for document in mysqlCursor.fetchall():
+            batchInfo[str(document[0])] = { "FFDID"    : str(document[1]),
+                                            "BT_ROUTE" : destTypes[str(document[2])],
+                                            "PAGECOUNT": str(document[3])}
+        if batchInfo == {}:
+            print("Did not find any record in fsidocument for customerId: %s, batchId: %s" % (arguments['custId'], arguments[0]))
+            sys.exit()                                        
+                                            
+        fsiDocumentInfo[preOrPost] = batchInfo
+        preOrPost = "postchange"
+                                            
+    return fsiDocumentInfo
 
 def GoogleAPIAuthorization():
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -211,70 +262,7 @@ def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=Fals
         startRow = str(int(list(filter(str.isdigit, str(startPos)))[0]) + rowsPerUpdate)
         startPos = sheetName + '!' + startCol + startRow
 
-#########################
-def InitMongoClient(queryProd = False):
-    ###############################
-    # START: GET USER CREDENTIALS #
-    userName = os.getenv('username')
-    userPassword = ''
-    roboPath = "C:\\Users\\%s\\.3T\\robo-3t\\1.3.1\\robo3t.json" % userName
-
-    print ("Validating user credentials...")
-    try:
-        with open(roboPath) as json_file:
-            connectionData = json.load(json_file)
-            for connection in connectionData['connections']:
-                # AS_061719: update below line to check for different hosts
-                if connection['serverHost'].split('.')[0] in ("ssnj-immongodb01","ssnj-immongodb02","ssnj-immongodb03"):
-                    for cred in connection['credentials']:
-                        userName = cred['userName']
-                        userPassword = cred['userPassword']
-    except:
-        userName = "cweakley"
-        userPassword = "vn6oCdWK"
-
-
-    # END: GET USER CREDENTIALS #
-    #############################
-
-    ##################################
-    # START: CONNECT TO MONGO CLIENT #
-    print ("Connecting to mongo client...")
-    imsMongoClient = MongoReplicaSetClient(["ssnj-immongodb01:10001", "ssnj-immongodb02:10001", "ssnj-immongodb03:10001"],
-                                            userName = userName,
-                                            password = userPassword,
-                                            authSource = 'docpropsdb',
-                                            authMechanism = 'SCRAM-SHA-1')
-    im_fsidocprops = imsMongoClient.docpropsdb.fsidocprops
-
-    prod_fsidocprops = None 
-    if queryProd:
-        prodMongoClient = MongoClient(["prmreportdb01:10001"],
-                                                userName = userName,
-                                                password = 'gEvSnvCy',
-                                                authSource = 'docpropsdb',
-                                                authMechanism = 'SCRAM-SHA-1')
-        prod_fsidocprops = prodMongoClient.docpropsdb.fsidocprops
-    return im_fsidocprops, prod_fsidocprops
-
-    # END: CONNECT TO MONGO CLIENT #
-    ################################
-
-    ##################################
-    #  START: CONNECT TO SQL sERVER  #
-
-def InitSqlServerConn(server='dnco-stc2bsql.billtrust.local',database='carixDataProcessing',trusted_conn_bool='yes'):
-    print('Connecting using windows auth...')
-    conn = pyodbc.connect(driver='{SQL Server}',
-                          server=server,
-                          database=database)
-    cursor = conn.cursor()
-    return cursor
-    print('Connected, cursor object returned...')
-    #   END: CONNECT TO SQL SERVER   #
-    ##################################
-
-def GetDocProps(im_fsidocprops, coversheetDocIds, arguments, prod_fsidocprops=''):
+def GetDocProps(fsidocprops, coversheetDocIds, arguments):
     # START: QUERY FOR DP #
     #######################
     #preId = int(app.getEntry('ePrechangeId'))
@@ -286,11 +274,15 @@ def GetDocProps(im_fsidocprops, coversheetDocIds, arguments, prod_fsidocprops=''
     #if prod_fsidocprops != '' or prod_fsidocprops is not None:
     #    fsidocprops = prod_fsidocprops
     #else:
-    fsidocprops = im_fsidocprops    
-    prechangeProps = fsidocprops.find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[0]}})
+    #fsidocprops = arguments['preEnv']
+    #print (arguments)
+    #print (fsidocprops[arguments['preEnv']])
+    #pre_fsidocprops = fsidocprops[arguments['preEnv']]   
+    prechangeProps = fsidocprops[arguments['preEnv']].find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds['prechange']}})
     #fsidocprops = im_fsidocprops
-    postchangeProps = fsidocprops.find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[1]}})
+    postchangeProps = fsidocprops[arguments['postEnv']].find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds['postchange']}})
     print("Query successful...")
+    #print (prechangeProps, postchangeProps)
     prechangeProps = list(prechangeProps)
     postchangeProps = list(postchangeProps)
     #sys.exit()
@@ -305,7 +297,7 @@ def GetDocProps(im_fsidocprops, coversheetDocIds, arguments, prod_fsidocprops=''
     return(prechangeProps, postchangeProps)
 
 # Was going to try out Pandas with this function but then I got lazy
-def QueryMongo(coversheetDocIds, fsidocprops, arguments):
+def QueryMongo(fsidocprops, coversheetDocIds, arguments):
     #fsidocprops = InitMongoClient()
     # START: QUERY FOR DP #
     #######################
@@ -317,9 +309,9 @@ def QueryMongo(coversheetDocIds, fsidocprops, arguments):
 
     #pd.set_option('display.max_columns', 500)
 
-    prechangePropsGen = fsidocprops.find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[0]}},
+    prechangePropsGen = fsidocprops[arguments['preEnv']].find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds['prechange']}},
         {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
-    postchangePropsGen = fsidocprops.find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds[1]}},
+    postchangePropsGen = fsidocprops[arguments['postEnv']].find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds['postchange']}},
         {'_id':0, 'batchId':0, 'customerId':0, 'size':0, 'seq':0, 'lockId':0})
 
     '''
@@ -352,12 +344,8 @@ def QueryMongo(coversheetDocIds, fsidocprops, arguments):
     print("Time Elapsed: %s" % (time.time() - startTime))
 
     return(prechangePropsGen, postchangePropsGen)
-    #sys.exit()
-    #################
-    # TEST FUNCTION #
-    #MergeToDataFrame(prechangePropsGen, postchangePropsGen)
 
-def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo):
+def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo):
     print("Starting MergerBatchData...")
     fsiDocumentProps = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
     docPropLabels = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
@@ -410,13 +398,13 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
     # These are the doc props that will be used as a unique key to match up pre/post documents
     # In the future this should be defaulted to acc num and inv num with the option for user override
     #propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER"]  "PO_NUMBER", "BT_ROUTE", "TOTAL_DUE"
-    propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER", "FFDID", "FILENAME", "TOTAL_DUE"]
+    propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER", "TOTAL_DUE"]
     for document in prechangeProps:
         # Get master key before starting
         masterKey = []
         for prop in propKeys:
             if prop in fsiDocumentProps:
-                masterKey.append(preBatchInfo[str(document.get('documentId'))].get(prop))
+                masterKey.append(fsiDocumentInfo['prechange'][str(document.get('documentId'))].get(prop))
             else:
                 for docProp in document.get('properties'):
                     if prop == docProp.get('k'):
@@ -437,18 +425,19 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
             print("Not able to find any doc prop keys in the prechange batch")
             print(str(count))
             sys.exit()
-        elif masterKey in masterPropList:
-            print("Found a duplicate masterkey within the prechange batch: ", masterKey)
-            print("Master key components:", '~'.join(propKeys))
-            sys.exit()
+        if False:
+            if masterKey in masterPropList:
+                print("Found a duplicate masterkey within the prechange batch: ", masterKey)
+                print("Master key components:", '~'.join(propKeys))
+                sys.exit()
 
         #print (docProps)
         for docPropLabel in docPropLabels:
             if docPropLabel == "DOCUMENTID":
                 masterPropList[masterKey] = [[str(document.get('documentId')), '']]
             elif docPropLabel in fsiDocumentProps:
-                #print(preBatchInfo[str(document.get('documentId'))][docPropLabel])
-                masterPropList[masterKey].append([preBatchInfo[str(document.get('documentId'))][docPropLabel], ''])
+                #print(fsiDocumentInfo['prechange'][str(document.get('documentId'))][docPropLabel])
+                masterPropList[masterKey].append([fsiDocumentInfo['prechange'][str(document.get('documentId'))][docPropLabel], ''])
             else:
                 tempPropValues = ['', '']
                 if docPropLabel != "":
@@ -471,7 +460,7 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
         masterKey = []
         for prop in propKeys:
             if prop in fsiDocumentProps:
-                masterKey.append(postBatchInfo[str(document.get('documentId'))].get(prop))
+                masterKey.append(fsiDocumentInfo['postchange'][str(document.get('documentId'))].get(prop))
             else:
                 for docProp in document.get('properties'):
                     if prop == docProp.get('k'):
@@ -498,7 +487,7 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
             if docPropLabel == "DOCUMENTID":
                 masterPropList[masterKey][i][1] = str(document.get('documentId'))
             elif docPropLabel in fsiDocumentProps:
-                masterPropList[masterKey][i][1] = postBatchInfo[str(document.get('documentId'))][docPropLabel]
+                masterPropList[masterKey][i][1] = fsiDocumentInfo['postchange'][str(document.get('documentId'))][docPropLabel]
             elif docPropLabel != "":
                 for prop in document.get('properties'):
                     propName = prop.get('k')
@@ -508,19 +497,19 @@ def MergeBatchData(prechangeProps, postchangeProps, preBatchInfo, postBatchInfo)
                         else:    
                             masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
                         break
-
-        if misMatchCount > ((len(prechangeProps) + len(postchangeProps)) / 4) \
-          or misMatchCount > len(prechangeProps) * .75 \
-          or misMatchCount > len(postchangeProps) * .75:
-            print("ERROR: More than half of the total document count are mismatched, or more than 75% of either the pre or post change documents " \
-                  "are mismatched, check prechange and postchange batch ids.")
-            sys.exit()
+        if False:                
+            if misMatchCount > ((len(prechangeProps) + len(postchangeProps)) / 4) \
+              or misMatchCount > len(prechangeProps) * .75 \
+              or misMatchCount > len(postchangeProps) * .75:
+                print("ERROR: More than half of the total document count are mismatched, or more than 75% of either the pre or post change documents " \
+                      "are mismatched, check prechange and postchange batch ids.")
+                sys.exit()
     print(misMatchCount, len(prechangeProps), len(postchangeProps))
     print("Time Elapsed: %s" % (time.time() - startTime))
 
     return(docPropLabels, masterPropList, misMatchCount, len(prechangeProps), len(postchangeProps))
 
-def MergeToDataFrame(prechangePropsGen, postchangePropsGen, preBatchInfo, postBatchInfo, arguments):
+def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arguments):
     print("Starting MergeToDataFrame...")
     fsiDocumentProps = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
     docPropLabels = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
@@ -533,6 +522,7 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, preBatchInfo, postBa
     fileList = {}             
     # Add all doc props from our prechange and postchange batches to a list of doc prop names
     isPrechangeLoop = True
+    preOrPost = "prechange"
     for batch in (prechangePropsGen, postchangePropsGen):
         # Doc props can be split across multiple mongo Objects, this means documentId cannot be used as a unique identifier
         # Here we remove and combine these split db objects and add them back into our original list
@@ -568,9 +558,9 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, preBatchInfo, postBa
             # Add our fsiDocument values
             for docPropName in fsiDocumentProps:
                 if isPrechangeLoop:
-                    docProps[docPropName] = preBatchInfo[docId][docPropName]
+                    docProps[docPropName] = fsiDocumentInfo[preOrPost][docId][docPropName]
                 else:
-                    docProps[docPropName] = postBatchInfo[docId][docPropName]
+                    docProps[docPropName] = fsiDocumentInfo[preOrPost][docId][docPropName]
 
             # if pages > 1, document is split across multiple mongo objects and should be combined
             if document.get('pages') > 1:
@@ -610,6 +600,7 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, preBatchInfo, postBa
                     postchangeProps[splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
 
         isPrechangeLoop = False
+        preOrPost = "postchange"
 
 
     # Sort the labels and add DOCUMENTID, ACCOUNT_NUMBER and INVOICE_NUMBER to the front
@@ -687,16 +678,16 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, preBatchInfo, postBa
     #print(masterPropDf.columns)
     ### PANDAS BULLSHIT ###
 
-def CreateCompareTab(masterPropDf):
+def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs):
 
     #rowCount = ((len(prechangeProps) + len(postchangeProps)) * 2) + 2
-    addSheetResponse = SendUpdateRequests(service, AddCompareSheet(len(masterPropDf.index)+4))
+    addSheetResponse = SendUpdateRequests(service, AddCompareSheet(len(masterPropList)+4))
     sheetId = addSheetResponse.get('replies')[0].get('addSheet').get('properties').get('sheetId')
     sheetName = str(addSheetResponse.get('replies')[0].get('addSheet').get('properties').get('title'))
 
     ws = gc.open(sheetName).worksheet(sheetId)
     existing = gd.get_as_dataframe(ws)
-    updated = existing.append(masterPropDf)
+    updated = existing.append(masterPropList)
     gd.set_with_dataframe(ws, updated)
 
     sys.exit()
@@ -900,7 +891,7 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
     currentColIndex = 2
     #
     endColIndex = startColIndex + len(masterPropList[list(masterPropList.keys())[0]]) - 1 # subract 1 because we dont include docid or pre/post number
-    colIndexes = range(startColIndex, endColIndex+1) #keep track of columns labels that have already turned red due to mismatch
+    colIndexes = list(range(startColIndex, endColIndex+1)) #keep track of columns labels that have already turned red due to mismatch
 
     print ("Setting column widths...")
     print("Time Elapsed: %s" % (time.time() - startTime))
@@ -1590,22 +1581,24 @@ def run(argv):
     if len(argv) != 4:
         print("Command line arguments not given, using values hardcoded within run() function...")
 
-        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1-SWPPRg2i2IsTgUA-4BvpEkMyE1TBZUvmEHZw1zpWo4/edit?usp=drive_web&ouid=116956695434029002425'
-        spreadsheetId = spreadsheetURL[:spreadsheetURL.rfind("/")]
-        spreadsheetId = spreadsheetId[spreadsheetId.rfind("/")+1:]
+        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1-SWPPRg2i2IsTgUA-4BvpEkMyE1TBZUvmEHZw1zpWo4/edit#gid=963756480'
+        spreadsheetId = spreadsheetURL.split('/')[-2]
 
-        arguments = {"custId"           : 961,
-                     "preId"            : 13847185,
-                     "postId"           : 13847315,
+        arguments = {"custId"           : 2591,
+                     "preId"            : 13848513,
+                     "preEnv"           : "imdb", # imdb or reportdb, imdb should be default
+                     "postId"           : 13848913,
+                     "postEnv"          : "imdb", # imdb or reportdb, imdb should be default
                      "spreadsheetURL"   : spreadsheetURL,
                      "spreadsheetId"    : spreadsheetId}
         pprint(arguments)
     else:
-        spreadsheetId = argv[3][:argv[3].rfind("/")]
-        spreadsheetId = spreadsheetId[spreadsheetId.rfind("/")+1:]
+        spreadsheetId = argv[3].split('/')[-2]
         arguments = {"custId"           : int(argv[0]),
                      "preId"            : int(argv[1]),
+                     "preEnv"           : "imdb", # imdb or reportdb, imdb should be default
                      "postId"           : int(argv[2]),
+                     "postEnv"          : "imdb", # imdb or reportdb, imdb should be default                     
                      "spreadsheetURL"   : argv[3],
                      "spreadsheetId"    : spreadsheetId}
         print("Proceeding with the following command line arguments...")
@@ -1620,22 +1613,22 @@ def run(argv):
     if bConnToSqlServer:
         sqlServerCursor = InitSqlServerConn()
     # Get list of Coversheet FFDIds
-    im_sqlClient, prod_sqlClient = InitSQLClient()
-    coversheetDocIds = GetCoversheetDocIds(im_sqlClient, prod_sqlClient, arguments )
+    mysqlClient = InitSQLClient()
+    coversheetDocIds = GetCoversheetDocIds(mysqlClient, arguments)
 
     # Get ffdid, routing and pagecount from fsidocument, returns two lists of dicts, a prechange and postchange
-    fsiDocumentInfo = GetFSIDocumnetInfo(im_sqlClient, arguments)
+    fsiDocumentInfo = GetFSIDocumnetInfo(mysqlClient, arguments)
 
     # Init mongo client, returns the fsidocprops collection to query against
-    im_fsidocprops, prod_fsidocprops = InitMongoClient(queryProd=False)
+    fsidocprops = InitMongoClient()
 
     # Get list of doc prop names from prechange and postchange excluding coversheets
-    prePostDocProps = GetDocProps(im_fsidocprops, coversheetDocIds, arguments)
-    #prePostDocProps = QueryMongo(coversheetDocIds, fsidocprops, arguments)
+    prePostDocProps = GetDocProps(fsidocprops, coversheetDocIds, arguments)
+    #prePostDocProps = QueryMongo(fsidocprops, coversheetDocIds, arguments)
 
     # Merge pre and post batches, returns list = [docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs]
-    mergedData = MergeBatchData(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo[0], fsiDocumentInfo[1])
-    #mergedData = MergeToDataFrame(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo[0], fsiDocumentInfo[1], arguments)
+    mergedData = MergeBatchData(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo)
+    #mergedData = MergeToDataFrame(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo, arguments)
 
     # Add all information to our google sheet and format cells accordingly
     CreateDPCompareTab(mergedData[0], mergedData[1], mergedData[2], mergedData[3], mergedData[4], arguments)
