@@ -259,8 +259,8 @@ def UpdateSingleRange(values, startPos, sheetName, spreadsheetId, printData=Fals
         # update starting position
         startPos = startPos.split("!")[1]
         startCol = list(filter(str.isalpha, str(startPos)))[0]
-        startRow = str(int(list(filter(str.isdigit, str(startPos)))[0]) + rowsPerUpdate)
-        startPos = sheetName + '!' + startCol + startRow
+        startRow = int(''.join(list(filter(str.isdigit, str(startPos))))) + rowsPerUpdate
+        startPos = "%s!%s%s" % (sheetName, startCol, startRow)
 
 def GetDocProps(fsidocprops, coversheetDocIds, arguments):
     # START: QUERY FOR DP #
@@ -479,8 +479,10 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo):
             print(masterKey)
             misMatchCount += 1
             masterPropList[masterKey] = []
+            noMatch = 'NO MATCH'
             for label in docPropLabels:
-                masterPropList[masterKey].append(['',''])
+                masterPropList[masterKey].append([noMatch,''])
+                noMatch = ''
             misMatch = True
 
         for i, docPropLabel in enumerate(docPropLabels):
@@ -726,6 +728,7 @@ def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs,
     # NEW COLOR RANGES
     dpValuesEq = {}
     dpValuesNe = []
+    misMatchedPair = []
     dpValuesEqual = True
     dpNeCols = [] # cell range of dp labels to turn red
     dpEqRows = []
@@ -745,6 +748,14 @@ def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs,
             row2.append(docPropValue[1]) #postchange
             if docPropValue[0] != docPropValue[1]:
                 if docPropLabels[currentColIndex-2] != "DOCUMENTID":
+                    if docPropValue[0] == "NO MATCH":
+                        print("DocId", docPropValue[1])
+                        misMatchedPair.append({ "sheetId": sheetId,
+                                                "startColumnIndex": currentColIndex - 1 ,
+                                                "endColumnIndex": endColIndex,
+                                                "startRowIndex": startRowNum - 2,
+                                                "endRowIndex": startRowNum})
+                        break    
                     dpRowEq = False
                     # Store a list of all doc props that were changed
                     if docPropLabels[currentColIndex-2] not in changedDocProps:
@@ -770,6 +781,7 @@ def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs,
                     elif not dpValuesEqual:
                         dpValuesNe[-1]["endColumnIndex"] = currentColIndex
                         dpValuesNe[-1]["endRowIndex"] = currentRowNum + 1
+
             else:
                 dpValuesEqual = True
             currentColIndex += 1
@@ -855,6 +867,9 @@ def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs,
 
     AddPairColor(dpValuesNe, dpValuesEq)
 
+    requests = AddGrayBackground(misMatchedPair)
+    SendUpdateRequests(service, requests, spreadsheetId)
+
     print("Hiding rows that saw no change from pre to post...")
     HideNoChangeRows(dpEqRows)
 
@@ -918,6 +933,7 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
     dpValuesEqual = True
     dpNeCols = [] # cell range of dp labels to turn red
     dpEqRows = []
+    misMatchedPair = []
     changedDocProps = {}
     numOfChangedPairs = 0
     compareNumber = 1
@@ -928,37 +944,46 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
         row1 = ["PRE.%06d" % compareNumber]
         row2 = ["POS.%06d" % compareNumber]
         dpRowEq = True
+        misMatched = False
         for docPropValue in documentPair:
             #print(docPropValue)
             row1.append(docPropValue[0]) #prechange
             row2.append(docPropValue[1]) #postchange
             if docPropValue[0] != docPropValue[1]:
-                if docPropLabels[currentColIndex-2] != "DOCUMENTID":
-                    dpRowEq = False
-                    # Store a list of all doc props that were changed
-                    if docPropLabels[currentColIndex-2] not in changedDocProps:
-                        changedDocProps[docPropLabels[currentColIndex-2]] = {"documents": ["Changed Document Pairs:", "PRE.%06d - POS.%06d" % (compareNumber, compareNumber)],
-                                                                             "column": currentColIndex-1,
-                                                                             "row": currentRowNum-1}
-                    else:
-                        changedDocProps[docPropLabels[currentColIndex-2]]["documents"].append("PRE.%06d - POS.%06d" % (compareNumber, compareNumber))
-                    if currentColIndex in colIndexes:
-                        dpNeCols.append({   "sheetId": sheetId,
-                                            "startColumnIndex": currentColIndex - 1 ,
-                                            "endColumnIndex": currentColIndex,
-                                            "startRowIndex": startRowNum - 2,
-                                            "endRowIndex": startRowNum-1})
-                        colIndexes.remove(currentColIndex)
-                    if dpValuesEqual:
-                        dpValuesNe.append({ "sheetId": sheetId,
-                                            "startColumnIndex": currentColIndex - 1 ,
-                                            "endColumnIndex": currentColIndex,
+                if docPropValue[0] == "NO MATCH":
+                    misMatched = True
+                    misMatchedPair.append({ "sheetId": sheetId,
+                                            "startColumnIndex": currentColIndex,
+                                            "endColumnIndex": endColIndex,
                                             "startRowIndex": currentRowNum - 1,
                                             "endRowIndex": currentRowNum + 1})
-                        dpValuesEqual = False
-                    elif not dpValuesEqual:
-                        dpValuesNe[-1]["endColumnIndex"] = currentColIndex
-                        dpValuesNe[-1]["endRowIndex"] = currentRowNum + 1
+                else:                                            
+                    if docPropLabels[currentColIndex-2] != "DOCUMENTID" and not misMatched:              
+                        dpRowEq = False
+                        # Store a list of all doc props that were changed
+                        if docPropLabels[currentColIndex-2] not in changedDocProps:
+                            changedDocProps[docPropLabels[currentColIndex-2]] = {"documents": ["Changed Document Pairs:", "PRE.%06d - POS.%06d" % (compareNumber, compareNumber)],
+                                                                                 "column": currentColIndex-1,
+                                                                                 "row": currentRowNum-1}
+                        else:
+                            changedDocProps[docPropLabels[currentColIndex-2]]["documents"].append("PRE.%06d - POS.%06d" % (compareNumber, compareNumber))
+                        if currentColIndex in colIndexes:
+                            dpNeCols.append({   "sheetId": sheetId,
+                                                "startColumnIndex": currentColIndex - 1 ,
+                                                "endColumnIndex": currentColIndex,
+                                                "startRowIndex": startRowNum - 2,
+                                                "endRowIndex": startRowNum-1})
+                            colIndexes.remove(currentColIndex)
+                        if dpValuesEqual:
+                            dpValuesNe.append({ "sheetId": sheetId,
+                                                "startColumnIndex": currentColIndex - 1 ,
+                                                "endColumnIndex": currentColIndex,
+                                                "startRowIndex": currentRowNum - 1,
+                                                "endRowIndex": currentRowNum + 1})
+                            dpValuesEqual = False
+                        elif not dpValuesEqual:
+                            dpValuesNe[-1]["endColumnIndex"] = currentColIndex
+                            dpValuesNe[-1]["endRowIndex"] = currentRowNum + 1
             else:
                 dpValuesEqual = True
             currentColIndex += 1
@@ -1047,6 +1072,10 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
 
     requests = AddPairColor(dpValuesNe, dpValuesEq, sheetId)
     SendUpdateRequests(service, requests, spreadSheetId)
+
+    if misMatchedPair != []:
+        requests = AddGrayBackground(misMatchedPair)
+        SendUpdateRequests(service, requests, spreadSheetId)
 
     print("Hiding rows that saw no change from pre to post...")
     requests = HideNoChangeRows(dpEqRows, sheetId)
@@ -1149,6 +1178,27 @@ def AddPairColor(dpValuesNe, dpValuesEq, sheetId):
           }
         })
     #SendUpdateRequests(service, requests, spreadSheetId)
+    return requests
+
+def AddGrayBackground(misMatchedPair):
+    requests = []
+    for pair in misMatchedPair:
+        requests.append(
+        {
+          "repeatCell": {
+            "range": pair,
+            "cell": {
+              "userEnteredFormat": {
+                "backgroundColor": {
+                  "blue": 0.8,  # Light gray if mismatched
+                  "green": 0.8,
+                  "red": 0.8,
+                },
+              }
+            },
+            "fields": "userEnteredFormat(backgroundColor)"
+          }
+        })
     return requests
 
 
@@ -1581,13 +1631,13 @@ def run(argv):
     if len(argv) != 4:
         print("Command line arguments not given, using values hardcoded within run() function...")
 
-        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1-SWPPRg2i2IsTgUA-4BvpEkMyE1TBZUvmEHZw1zpWo4/edit#gid=963756480'
+        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1s_AnRbzkpWp_q1k_YKysaEYVxwXDf8UaiWIrXhxnTyE/edit#gid=1452099013'
         spreadsheetId = spreadsheetURL.split('/')[-2]
 
-        arguments = {"custId"           : 2591,
-                     "preId"            : 13848513,
+        arguments = {"custId"           : 2029,
+                     "preId"            : 13848553,
                      "preEnv"           : "imdb", # imdb or reportdb, imdb should be default
-                     "postId"           : 13848913,
+                     "postId"           : 13848675,
                      "postEnv"          : "imdb", # imdb or reportdb, imdb should be default
                      "spreadsheetURL"   : spreadsheetURL,
                      "spreadsheetId"    : spreadsheetId}
