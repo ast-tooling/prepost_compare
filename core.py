@@ -24,11 +24,21 @@ class PrePostComp(object):
             self.spreadsheetUrl = ''
             self.spreadsheetId = ''
 
-        # more optional params that will need a default value, this may
-        # be a bad way to go about this, should we just add a dict of
-        # default values as the instance variable instead of the individual params?
-        optionalParams = {  'preEnv'  : "imdb",
-                            'postEnv' : "imdb",}
+        # Optional Parameters and Default Values:
+        # -preEnv and postEnv
+        #   desc: environment batch was ran in
+        #   values: imdb, reportdb
+        # -compareLogic
+        #   desc: logic used to match docs across batches
+        #   values: docId, masterKey     
+        # -masterKeyProps
+        #   desc: doc props that will be used to match docs across batches if compareLogic = docId
+        #   values: props listed and any user defined properties from free-form text box   
+        optionalParams = {  'preEnv'        : 'imdb',   # or 'reportdb'
+                            'postEnv'       : 'imdb',   # or 'reportdb'
+                            'compareLogic'  : 'docId',  # or 'masterKey'
+                            'masterKeyProps': ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID']} 
+
         for param in optionalParams.keys():
             if param in kwargs:
                 setattr(self, param, kwargs[param])
@@ -37,13 +47,15 @@ class PrePostComp(object):
 
         # create arguments dict to pass to funcs
         self.arguments = {
-            "custId"        : self.csrId,
-            "preId"         : self.prechangeId,
-            "preEnv"        : self.preEnv,
-            "postId"        : self.postchangeId,
-            "postEnv"       : self.postEnv,
-            "spreadsheetURL": self.spreadsheetUrl,
-            "spreadSheetId" : self.spreadsheetId,
+            'custId'        : self.csrId,
+            'preId'         : self.prechangeId,
+            'preEnv'        : self.preEnv,
+            'postId'        : self.postchangeId,
+            'postEnv'       : self.postEnv,
+            'spreadsheetURL': self.spreadsheetUrl,
+            'spreadSheetId' : self.spreadsheetId,
+            'compareLogic'  : self.compareLogic,
+            'masterKeyProps': self.masterKeyProps
         }
         # as a part of constructer, connect to databases
         self.mysqlClient = compare.InitSQLClient()

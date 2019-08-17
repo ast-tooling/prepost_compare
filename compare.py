@@ -345,7 +345,7 @@ def QueryMongo(fsidocprops, coversheetDocIds, arguments):
 
     return(prechangePropsGen, postchangePropsGen)
 
-def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo):
+def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo, arguments):
     print("Starting MergerBatchData...")
     fsiDocumentProps = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
     docPropLabels = ["FFDID", "BT_ROUTE", "PAGECOUNT"]
@@ -398,11 +398,11 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo):
     # These are the doc props that will be used as a unique key to match up pre/post documents
     # In the future this should be defaulted to acc num and inv num with the option for user override
     #propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER"]  "PO_NUMBER", "BT_ROUTE", "TOTAL_DUE"
-    propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER", "TOTAL_DUE"]
+    #propKeys = ["ACCOUNT_NUMBER", "INVOICE_NUMBER", "TOTAL_DUE", "FFDID"]
     for document in prechangeProps:
         # Get master key before starting
         masterKey = []
-        for prop in propKeys:
+        for prop in arguments['masterKeyProps']:
             if prop in fsiDocumentProps:
                 masterKey.append(fsiDocumentInfo['prechange'][str(document.get('documentId'))].get(prop))
             else:
@@ -425,10 +425,10 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo):
             print("Not able to find any doc prop keys in the prechange batch")
             print(str(count))
             sys.exit()
-        if False:
+        if True:
             if masterKey in masterPropList:
                 print("Found a duplicate masterkey within the prechange batch: ", masterKey)
-                print("Master key components:", '~'.join(propKeys))
+                print("Master key components:", '~'.join(arguments['masterKeyProps']))
                 sys.exit()
 
         #print (docProps)
@@ -458,7 +458,7 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo):
         misMatch = False
         # Get master key before starting
         masterKey = []
-        for prop in propKeys:
+        for prop in arguments['masterKeyProps']:
             if prop in fsiDocumentProps:
                 masterKey.append(fsiDocumentInfo['postchange'][str(document.get('documentId'))].get(prop))
             else:
@@ -499,7 +499,7 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo):
                         else:    
                             masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
                         break
-        if False:                
+        if True:                
             if misMatchCount > ((len(prechangeProps) + len(postchangeProps)) / 4) \
               or misMatchCount > len(prechangeProps) * .75 \
               or misMatchCount > len(postchangeProps) * .75:
@@ -518,30 +518,29 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
 
     prechangeProps = {}
     postchangeProps = {}
-    batchData = {"preBatchCount": 0,
-                 "postBatchCount": 0,
-                 "fileList": set(),}
+    batchInfo = {"preBatchCount"    : 0,
+                 "postBatchCount"   : 0,
+                 "misMatchCount"    : 0,
+                 "fileList"         : set(),}
     fileList = {}             
     # Add all doc props from our prechange and postchange batches to a list of doc prop names
-    isPrechangeLoop = True
     preOrPost = "prechange"
-    for batch in (prechangePropsGen, postchangePropsGen):
+    batchCount = "preBatchCount"
+    for batch in ((prechangePropsGen, prechangeProps), (postchangePropsGen, postchangeProps)):
         # Doc props can be split across multiple mongo Objects, this means documentId cannot be used as a unique identifier
         # Here we remove and combine these split db objects and add them back into our original list
         # See Example: db.getCollection('fsidocprops').find({"customerId":2001, "batchId":13811669, "documentId":4315315279})
         splitObjects = {} # keep track of documents that are split across multiplie mongo objects
-        for document in batch:
+        for document in batch[0]:
             isSplitObject = False
             docProps = {} # used to temp store our docProp label and values
             docId = str(document.get('documentId'))
             docProps['DOCUMENTID'] = docId
 
             # Keep track of how many documents are in each batch
-            if isPrechangeLoop:
-                batchData["preBatchCount"] += 1
-            else:
-                batchData["postBatchCount"] += 1    
-
+   
+            batchInfo[batchCount] += 1
+ 
             for prop in document.get('properties'):
                 docPropName = prop.get('k').strip()
                 if docPropName: # Do not add columnar properties or special biscuit generated properties.. XML_DATA was causing a failure
@@ -551,18 +550,16 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                     elif docPropName not in ignoreTheseDocProps:
                         if docPropName == "FILENAME":
                             docProps[docPropName] = prop.get('v').split("\\")[-1]  # only grab the file name and not the full path
-                            batchData["fileList"].add(docProps[docPropName])
+                            batchInfo["fileList"].add(docProps[docPropName])
                         else:   
                             docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]
                         # Create a list of all unique doc prop names across both pre and post
                         if docPropName not in docPropLabels:
                             docPropLabels.append(str(docPropName))
+
             # Add our fsiDocument values
             for docPropName in fsiDocumentProps:
-                if isPrechangeLoop:
-                    docProps[docPropName] = fsiDocumentInfo[preOrPost][docId][docPropName]
-                else:
-                    docProps[docPropName] = fsiDocumentInfo[preOrPost][docId][docPropName]
+                docProps[docPropName] = fsiDocumentInfo[preOrPost][docId][docPropName]
 
             # if pages > 1, document is split across multiple mongo objects and should be combined
             if document.get('pages') > 1:
@@ -571,38 +568,23 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                 else: 
                     splitObjects[docId].update(docProps)
                     # Each time we find a split doc we need to subtract one from our total doc count  
-                if isPrechangeLoop:
-                    batchData["preBatchCount"] -= 1
-                else:
-                    batchData["postBatchCount"] -= 1  
+                batchInfo[batchCount] -= 1
             else:
                 # Add to our OrderedDict with filename and docid as the key which can be used to properly sort objects
-                if isPrechangeLoop:
-                    if docProps['FILENAME'] in prechangeProps:
-                        prechangeProps[docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
-                    else:
-                        prechangeProps[docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}        
+                if docProps['FILENAME'] in batch[1]:
+                    batch[1][docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
                 else:
-                    if docProps['FILENAME'] in postchangeProps:
-                        postchangeProps[docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
-                    else:    
-                        postchangeProps[docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}
+                    batch[1][docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}        
 
         # clean up our splitObjects
         for documentId in splitObjects:
-            if isPrechangeLoop:
-                if splitObjects[documentId]['FILENAME'] in prechangeProps:
-                    prechangeProps[splitObjects[documentId]['FILENAME']].update({documentId:splitObjects[documentId]})
-                else:
-                    prechangeProps[splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
+            if splitObjects[documentId]['FILENAME'] in batch[1]:
+                batch[1][splitObjects[documentId]['FILENAME']].update({documentId:splitObjects[documentId]})
             else:
-                if splitObjects[documentId]['FILENAME'] in postchangeProps:
-                    postchangeProps[splitObjects[documentId]['FILENAME']].update({documentId:splitObjects[documentId]})
-                else:     
-                    postchangeProps[splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
+                batch[1][splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
 
-        isPrechangeLoop = False
         preOrPost = "postchange"
+        batchCount = "postBatchCount"
 
 
     # Sort the labels and add DOCUMENTID, ACCOUNT_NUMBER and INVOICE_NUMBER to the front
@@ -656,17 +638,17 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                 masterPropList.extend([[],propList])
                 #i += 2                        
 
-    #for line in masterPropList:
-    #    for s in line:
-    #        print(s)
-    #    sys.exit()                                        
+
+
+
     spreadSheetId = arguments['spreadsheetId']            
-    UpdateSingleRange(masterPropList, "B2", "DP COMPARE 6", spreadSheetId)            
+    #UpdateSingleRange(masterPropList, "B2", "DP COMPARE 6", spreadSheetId)           
 
 
-    sys.exit()
+    #sys.exit()
+    CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments)
 
-    return (docPropLabels, masterPropList, 0, numOfPreDocs, numOfPostDocs)
+    #return (docPropLabels, masterPropList, batchInfo)
 
     ### PANDAS BULLSHIT ###
     #prechangeDf = pd.DataFrame(prechangeProps.values())
@@ -680,38 +662,43 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
     #print(masterPropDf.columns)
     ### PANDAS BULLSHIT ###
 
-def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs):
+def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
 
     #rowCount = ((len(prechangeProps) + len(postchangeProps)) * 2) + 2
-    addSheetResponse = SendUpdateRequests(service, AddCompareSheet(len(masterPropList)+4))
+    rowCount = len(masterPropList)+2
+    spreadsheetId = arguments['spreadsheetId']
+    addSheetResponse = SendUpdateRequests(service, AddCompareSheet(rowCount, spreadsheetId), spreadsheetId)
     sheetId = addSheetResponse.get('replies')[0].get('addSheet').get('properties').get('sheetId')
     sheetName = str(addSheetResponse.get('replies')[0].get('addSheet').get('properties').get('title'))
 
-    ws = gc.open(sheetName).worksheet(sheetId)
-    existing = gd.get_as_dataframe(ws)
-    updated = existing.append(masterPropList)
-    gd.set_with_dataframe(ws, updated)
+    # Add docprop labels to new tab
+    UpdateSingleRange([docPropLabels], "B2", sheetName, spreadsheetId)
 
-    sys.exit()
+    #ws = gc.open(sheetName).worksheet(sheetId)
+    #existing = gd.get_as_dataframe(ws)
+    #updated = existing.append(masterPropList)
+    #gd.set_with_dataframe(ws, updated)
 
+    #sys.exit()   
 
-
-    UpdateSingleRange([docPropLabels], "B2", sheetName)
     rows = []
     startRowNum = 3
     currentRowNum = 3
     startColIndex = 2
     currentColIndex = 2
     #
-    endColIndex = startColIndex + len(masterPropList[masterPropList.keys()[0]]) - 1 # subract 1 because we dont include docid or pre/post number
-    colIndexes = range(startColIndex, endColIndex+1) #keep track of columns labels that have already turned red due to mismatch
+    endColIndex = startColIndex + len(masterPropList[0]) - 1 # subract 2 because we dont include docid or pre/post number
+    colIndexes = list(range(startColIndex, endColIndex+1)) #keep track of columns labels that have already turned red due to mismatch
+
+    #sys.exit()
 
     print ("Setting column widths...")
     print("Time Elapsed: %s" % (time.time() - startTime))
-    requests = SetAutoColumnWidth(startColIndex, endColIndex)
-    SendUpdateRequests(service, requests, spreadSheetId)
-
-    #sys.exit()
+    requests = SetAutoColumnWidth(startColIndex, endColIndex, sheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
+    
+    # Add docprop values to new tab
+    UpdateSingleRange(masterPropList, "B3", sheetName, spreadsheetId)    
 
     prechangeRange = []
     postchangeRange = []
@@ -735,105 +722,123 @@ def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs,
     changedDocProps = {}
     numOfChangedPairs = 0
     compareNumber = 1
+    compareNumbers = []
 
     print("Number of Doc Props:", len(docPropLabels))
-    for documentPair in masterPropList.values():
+    for docCounter, document in enumerate(masterPropList):
         # ADD DATA
-        row1 = ["PRE.%06d" % compareNumber]
-        row2 = ["POS.%06d" % compareNumber]
         dpRowEq = True
-        for docPropValue in documentPair:
-            #print(docPropValue)
-            row1.append(docPropValue[0]) #prechange
-            row2.append(docPropValue[1]) #postchange
-            if docPropValue[0] != docPropValue[1]:
-                if docPropLabels[currentColIndex-2] != "DOCUMENTID":
-                    if docPropValue[0] == "NO MATCH":
-                        print("DocId", docPropValue[1])
-                        misMatchedPair.append({ "sheetId": sheetId,
-                                                "startColumnIndex": currentColIndex - 1 ,
-                                                "endColumnIndex": endColIndex,
-                                                "startRowIndex": startRowNum - 2,
-                                                "endRowIndex": startRowNum})
-                        break    
-                    dpRowEq = False
-                    # Store a list of all doc props that were changed
-                    if docPropLabels[currentColIndex-2] not in changedDocProps:
-                        changedDocProps[docPropLabels[currentColIndex-2]] = {"documents": ["Changed Document Pairs:", "PRE.%06d - POS.%06d" % (compareNumber, compareNumber)],
-                                                                             "column": currentColIndex-1,
-                                                                             "row": currentRowNum-1}
+        if (docCounter+1) % 2 != 0:
+
+            # REDO THIS BULLSHIT
+            row1 = ["PRE.%06d" % compareNumber]
+            row2 = ["POS.%06d" % compareNumber]
+            compareNumbers.append(row1)
+            compareNumbers.append(row2)
+            # REDO THIS BULLSHIT
+
+            for propCounter, docPropValue in enumerate(document):
+                #print(docPropValue)
+                #row1.append(docPropValue[0]) #prechange
+                #row2.append(docPropValue[1]) #postchange
+                if docCounter < len(masterPropList) - 1:
+                    if docPropValue != masterPropList[docCounter+1][propCounter]:
+                        if docPropLabels[currentColIndex-2] != "DOCUMENTID":
+                            if docPropValue == "NO MATCH":
+                                print("DocId", docPropValue)
+                                misMatchedPair.append({ "sheetId": sheetId,
+                                                        "startColumnIndex": currentColIndex - 1 ,
+                                                        "endColumnIndex": endColIndex,
+                                                        "startRowIndex": startRowNum - 2,
+                                                        "endRowIndex": startRowNum})
+                                break    
+                            dpRowEq = False
+                            # Store a list of all doc props that were changed
+                            if docPropLabels[currentColIndex-2] not in changedDocProps:
+                                changedDocProps[docPropLabels[currentColIndex-2]] = {"documents": ["Changed Document Pairs:", "PRE.%06d - POS.%06d" % (compareNumber, compareNumber)],
+                                                                                     "column": currentColIndex-1,
+                                                                                     "row": currentRowNum-1}
+                            else:
+                                changedDocProps[docPropLabels[currentColIndex-2]]["documents"].append("PRE.%06d - POS.%06d" % (compareNumber, compareNumber))
+                            if currentColIndex in colIndexes:
+                                dpNeCols.append({   "sheetId": sheetId,
+                                                    "startColumnIndex": currentColIndex - 1 ,
+                                                    "endColumnIndex": currentColIndex,
+                                                    "startRowIndex": startRowNum - 2,
+                                                    "endRowIndex": startRowNum-1})
+                                colIndexes.remove(currentColIndex)
+                            if dpValuesEqual:
+                                dpValuesNe.append({ "sheetId": sheetId,
+                                                    "startColumnIndex": currentColIndex - 1 ,
+                                                    "endColumnIndex": currentColIndex,
+                                                    "startRowIndex": currentRowNum - 1,
+                                                    "endRowIndex": currentRowNum + 1})
+                                dpValuesEqual = False
+                            elif not dpValuesEqual:
+                                dpValuesNe[-1]["endColumnIndex"] = currentColIndex
+                                dpValuesNe[-1]["endRowIndex"] = currentRowNum + 1
+
                     else:
-                        changedDocProps[docPropLabels[currentColIndex-2]]["documents"].append("PRE.%06d - POS.%06d" % (compareNumber, compareNumber))
-                    if currentColIndex in colIndexes:
-                        dpNeCols.append({   "sheetId": sheetId,
-                                            "startColumnIndex": currentColIndex - 1 ,
-                                            "endColumnIndex": currentColIndex,
-                                            "startRowIndex": startRowNum - 2,
-                                            "endRowIndex": startRowNum-1})
-                        colIndexes.remove(currentColIndex)
-                    if dpValuesEqual:
-                        dpValuesNe.append({ "sheetId": sheetId,
-                                            "startColumnIndex": currentColIndex - 1 ,
-                                            "endColumnIndex": currentColIndex,
-                                            "startRowIndex": currentRowNum - 1,
-                                            "endRowIndex": currentRowNum + 1})
-                        dpValuesEqual = False
-                    elif not dpValuesEqual:
-                        dpValuesNe[-1]["endColumnIndex"] = currentColIndex
-                        dpValuesNe[-1]["endRowIndex"] = currentRowNum + 1
+                        dpValuesEqual = True
+                currentColIndex += 1
 
-            else:
-                dpValuesEqual = True
-            currentColIndex += 1
-        # used for summary statement at top of page
-        if not dpRowEq:
-            numOfChangedPairs += 1
-        # Reset bool for each pair
-        dpValuesEqual = True
-        # Build our 2D Array of row data
-        rows.append(row1)
-        rows.append(row2)
+            #############################    
 
-        dpLabelEqual.append("D%d=D%d" % (currentRowNum, currentRowNum+1))
-        dpLabelNotEqual.append("D%d<>D%d" % (currentRowNum, currentRowNum+1))
-        borderRange.append({ "sheetId": sheetId,
-                             "startColumnIndex": 0,
-                             "endColumnIndex": endColIndex,
-                             "startRowIndex": currentRowNum,
-                             "endRowIndex": currentRowNum+1})
-        #requests = AddCompFormatRule(service, requests, endColIndex, currentRowNum-1)
-        #AddCompFormatRule(service, "=D%s" % str(currentRowNum), endColIndex, currentRowNum)
-        #####
-        # Keep track of all rows that should be hidden because there was no change seen between pre and post for that pair
-        if dpRowEq:
-            if len(dpEqRows) > 0: # only check previous row if we have added at least one
-                if dpEqRows[-1][1] == currentRowNum-1:
-                    dpEqRows[-1][1] = currentRowNum+1 # extend previous range by our current pair
+            # used for summary statement at top of page
+            if not dpRowEq:
+                numOfChangedPairs += 1
+            # Reset bool for each pair
+            dpValuesEqual = True
+            # Build our 2D Array of row data
+            #rows.append(row1)
+            #rows.append(row2)
+
+            dpLabelEqual.append("D%d=D%d" % (currentRowNum, currentRowNum+1))
+            dpLabelNotEqual.append("D%d<>D%d" % (currentRowNum, currentRowNum+1))
+            borderRange.append({ "sheetId": sheetId,
+                                 "startColumnIndex": 0,
+                                 "endColumnIndex": endColIndex,
+                                 "startRowIndex": currentRowNum,
+                                 "endRowIndex": currentRowNum+1})
+            #requests = AddCompFormatRule(service, requests, endColIndex, currentRowNum-1)
+            #AddCompFormatRule(service, "=D%s" % str(currentRowNum), endColIndex, currentRowNum)
+            #####
+            # Keep track of all rows that should be hidden because there was no change seen between pre and post for that pair
+            if dpRowEq:
+                if len(dpEqRows) > 0: # only check previous row if we have added at least one
+                    if dpEqRows[-1][1] == currentRowNum-1:
+                        dpEqRows[-1][1] = currentRowNum+1 # extend previous range by our current pair
+                    else:
+                        dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # start a new range
                 else:
-                    dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # start a new range
-            else:
-                dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # add our first range
-        currentRowNum += 2
-        compareNumber += 1
-        currentColIndex = 2 # rest col index after each pair is added to rows
+                    dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # add our first range
+            currentRowNum += 2
+            compareNumber += 1
+            currentColIndex = 2 # rest col index after each pair is added to rows
+
+            #######################################
+
+    # Add compare index numbers to column A
+    UpdateSingleRange(compareNumbers, "A3", sheetName, spreadsheetId)    
 
     # Add rows of data to sheet
-    UpdateSingleRange(rows, "A%s" % str(startRowNum), sheetName)
+    #UpdateSingleRange(rows, "A%s" % str(startRowNum), sheetName)
     print("Time Elapsed: %s" % (time.time() - startTime))
     # Set all dp cells to green to start
     print("Setting all cells to green...")
     dpValuesEq = {  "sheetId": sheetId,
-                    "startColumnIndex": startColIndex + 1,
+                    "startColumnIndex": startColIndex,
                     "endColumnIndex": endColIndex,
                     "startRowIndex": startRowNum - 1,
-                    "endRowIndex": currentRowNum}
+                    "endRowIndex": currentRowNum - 1}
+             
     requests = AddGreenBackground(dpValuesEq)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
     # Now change all mismatched value pairs to red
     print("Changing cells to red...")
     if len(dpValuesNe) > 0:
         requests = AddRedBackground(dpValuesNe)
-        SendUpdateRequests(service, requests, spreadSheetId)
+        SendUpdateRequests(service, requests, spreadsheetId)
     else:
         print("No differences found between the two batchs...")
 
@@ -844,34 +849,48 @@ def CreateCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDocs,
                     "startRowIndex": startRowNum - 2,
                     "endRowIndex": startRowNum - 1}]
     requests = AddDPLabelBackground(dpEqCols, dpNeCols)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
+
 
     print ("Adding row borders...")
-    AddRowBorders(service, borderRange)
+    requests = AddRowBorders(service, borderRange)
+    SendUpdateRequests(service, requests, spreadsheetId)
 
     print ("Setting font to Calibri...")
-    SetFont(service, endColIndex)
+    requests = SetFont(service, endColIndex, sheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
+
     #print ("Adding conditional formatting rules for each document...")
     #requests = AddDPCompFormatRule(prechangeRange, postchangeRange)
     # Send conditional formatting requests
-    #SendUpdateRequests(service, requests, spreadSheetId)
+    #SendUpdateRequests(service, requests, spreadsheetId)
     # Send alternating colors request
     print("Adding alternating colors and batch information...")
-    SendUpdateRequests(service, AddAlternatingColors())
+    SendUpdateRequests(service, AddAlternatingColors(sheetId), spreadsheetId)
     #changedDPIndexes = docProp
     #changedDocProps = [docPropLabels[i] for i in dpNeCols] # Get dp labels that saw a change in any pre/post pair
 
-    AddChangedCellLink(changedDocProps, sheetId, sheetName)
+    AddChangedCellLink(changedDocProps, sheetId, sheetName, arguments)
 
-    AddBatchInformation(numOfPreDocs, numOfPostDocs, misMatchCount, numOfChangedPairs - misMatchCount, changedDocProps)
-
-    AddPairColor(dpValuesNe, dpValuesEq)
-
-    requests = AddGrayBackground(misMatchedPair)
+    requests = AddBatchInformation(batchInfo['preBatchCount'], batchInfo['postBatchCount'], batchInfo['misMatchCount'], numOfChangedPairs - batchInfo['misMatchCount'], changedDocProps, sheetId, sheetName, arguments)
     SendUpdateRequests(service, requests, spreadsheetId)
 
+    # INSERT COLUMN
+    #requests = AddColumn(2, 3, sheetId)
+    #SendUpdateRequests(service, requests, spreadsheetId)
+
+    # Add pair color to column C, either red or green
+    requests = AddPairColor(dpValuesNe, dpValuesEq, sheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
+
+    if misMatchedPair != []:
+        requests = AddGrayBackground(misMatchedPair)
+        SendUpdateRequests(service, requests, spreadsheetId)
+
     print("Hiding rows that saw no change from pre to post...")
-    HideNoChangeRows(dpEqRows)
+    requests = HideNoChangeRows(dpEqRows, sheetId)
+    if requests != []:
+        SendUpdateRequests(service, requests, spreadsheetId)
 
     #print("Adding summary information...")
     #summaryStatement = "Prechange Document Count: %s | Postchange Document Count: %s | Number of Mismatched Documents: %s | Number of Pairs with Change: %s" \
@@ -1092,6 +1111,22 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
     print("Time Elapsed: %s" % (time.time() - startTime))
     print("Mission successful...")
     sys.exit()
+
+
+def AddColumn(startIndex, endIndex, sheetId):
+    requests = [
+    {
+      "insertDimension": {
+        "range": {
+          "sheetId": sheetId,
+          "dimension": "COLUMNS",
+          "startIndex": startIndex,
+          "endIndex": endIndex
+        },
+        "inheritFromBefore": True
+      }
+    }]
+    return requests
 
 def AddPairColor(dpValuesNe, dpValuesEq, sheetId):
     requests = [
@@ -1631,16 +1666,18 @@ def run(argv):
     if len(argv) != 4:
         print("Command line arguments not given, using values hardcoded within run() function...")
 
-        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1s_AnRbzkpWp_q1k_YKysaEYVxwXDf8UaiWIrXhxnTyE/edit#gid=1452099013'
+        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/17idAnvvnWuvzQprSoiCPEDE-zYpKU3Con-wWnLAwXTo/edit#gid=0'
         spreadsheetId = spreadsheetURL.split('/')[-2]
 
-        arguments = {"custId"           : 2029,
-                     "preId"            : 13848553,
+        arguments = {"custId"           : 2546,
+                     "preId"            : 13849961,
                      "preEnv"           : "imdb", # imdb or reportdb, imdb should be default
-                     "postId"           : 13848675,
+                     "postId"           : 13850115,
                      "postEnv"          : "imdb", # imdb or reportdb, imdb should be default
                      "spreadsheetURL"   : spreadsheetURL,
-                     "spreadsheetId"    : spreadsheetId}
+                     "spreadsheetId"    : spreadsheetId,
+                     "compareLogic"     : "docId", # docId or masterKey
+                     'masterKeyProps'   : ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID']}
         pprint(arguments)
     else:
         spreadsheetId = argv[3].split('/')[-2]
@@ -1650,7 +1687,9 @@ def run(argv):
                      "postId"           : int(argv[2]),
                      "postEnv"          : "imdb", # imdb or reportdb, imdb should be default                     
                      "spreadsheetURL"   : argv[3],
-                     "spreadsheetId"    : spreadsheetId}
+                     "spreadsheetId"    : spreadsheetId,
+                     "compareLogic"     : "docId",
+                     'masterKeyProps'   : ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID']}
         print("Proceeding with the following command line arguments...")
         pprint(arguments)
 
@@ -1672,17 +1711,25 @@ def run(argv):
     # Init mongo client, returns the fsidocprops collection to query against
     fsidocprops = InitMongoClient()
 
-    # Get list of doc prop names from prechange and postchange excluding coversheets
-    prePostDocProps = GetDocProps(fsidocprops, coversheetDocIds, arguments)
-    #prePostDocProps = QueryMongo(fsidocprops, coversheetDocIds, arguments)
+    # masterKey compareLogic creates a unique identifier based on doc prop values in order to make documents in the prechange
+    # to their respective document in the postchange batch 
+    if arguments["compareLogic"] == "masterKey":
+        prePostDocProps = GetDocProps(fsidocprops, coversheetDocIds, arguments)
+        # Merge pre and post batches, returns list = [docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs]
+        mergedData = MergeBatchData(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo, arguments)
+        # Add all information to our google sheet and format cells accordingly
+        CreateDPCompareTab(mergedData[0], mergedData[1], mergedData[2], mergedData[3], mergedData[4], arguments)
 
-    # Merge pre and post batches, returns list = [docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs]
-    mergedData = MergeBatchData(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo)
-    #mergedData = MergeToDataFrame(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo, arguments)
+    # docId compareLogic matches prechange docs to postchange by using documentId, the lowest docId from pre batch matches
+    # the lowest docId from post batch
+    elif arguments["compareLogic"] == "docId":    
+        prePostDocProps = QueryMongo(fsidocprops, coversheetDocIds, arguments)
+        # Merge pre and post batches, returns list = [docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs]
+        mergedData = MergeToDataFrame(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo, arguments)
+        # Add all information to our google sheet and format cells accordingly
+        CreateCompareTab(mergedData[0], mergedData[1], mergedData[2], arguments)
 
-    # Add all information to our google sheet and format cells accordingly
-    CreateDPCompareTab(mergedData[0], mergedData[1], mergedData[2], mergedData[3], mergedData[4], arguments)
-
+    
 
 # Used to calc processing time
 startTime = time.time()
