@@ -34,10 +34,13 @@ class PrePostComp(object):
         # -masterKeyProps
         #   desc: doc props that will be used to match docs across batches if compareLogic = docId
         #   values: props listed and any user defined properties from free-form text box   
-        optionalParams = {  'preEnv'        : 'imdb',   # or 'reportdb'
-                            'postEnv'       : 'imdb',   # or 'reportdb'
-                            'compareLogic'  : 'docId',  # or 'masterKey'
-                            'masterKeyProps': ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID']} 
+        optionalParams = {  'preEnv'        : 'imdb',
+                            'postEnv'       : 'imdb',
+                            'compareLogic'  : 'docId',
+                            'masterKeyProps': ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID'],
+                            'ignoredProps'  : ['FILEDATE', 'SIG_BMP', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1',
+                                               'BILLING_ADDRESS_BEG2','BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4',
+                                               'BILLING_ADDRESS_ZIP5', 'BILLING_ADDRESS_CITY', 'BILLING_ADDRESS_STATE', 'ROWIMG', 'JOB_ID']} 
 
         for param in optionalParams.keys():
             if param in kwargs:
@@ -55,7 +58,8 @@ class PrePostComp(object):
             'spreadsheetURL': self.spreadsheetUrl,
             'spreadSheetId' : self.spreadsheetId,
             'compareLogic'  : self.compareLogic,
-            'masterKeyProps': self.masterKeyProps
+            'masterKeyProps': self.masterKeyProps,
+            'ignoredProps'  : self.ignoredProps,
         }
         # as a part of constructer, connect to databases
         self.mysqlClient = compare.InitSQLClient()
