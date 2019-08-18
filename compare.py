@@ -550,17 +550,17 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
     batchCount = "preBatchCount"
     for batch in ((prechangePropsGen, prechangeProps), (postchangePropsGen, postchangeProps)):
         # Doc props can be split across multiple mongo Objects, this means documentId cannot be used as a unique identifier
-        # Here we remove and combine these split db objects and add them back into our original list
+        # Here we remove and later combine these split db objects
         # See Example: db.getCollection('fsidocprops').find({"customerId":2001, "batchId":13811669, "documentId":4315315279})
         splitObjects = {} # keep track of documents that are split across multiplie mongo objects
         for document in batch[0]:
             isSplitObject = False
+            bFoundFileName = False
             docProps = {} # used to temp store our docProp label and values
             docId = str(document.get('documentId'))
             docProps['DOCUMENTID'] = docId
 
-            # Keep track of how many documents are in each batch
-   
+            # Keep track of how many documents are in each batch  
             batchInfo[batchCount] += 1
  
             for prop in document.get('properties'):
@@ -570,9 +570,13 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                         #print("Found first col prop, breaking properties loop at: %s, Line: %s" % (docPropName, prop.get('s')))
                         break
                     elif docPropName not in arguments['ignoredProps']:
-                        if docPropName == "FILENAME":
-                            docProps[docPropName] = prop.get('v').split("\\")[-1]  # only grab the file name and not the full path
-                            batchInfo["fileList"].add(docProps[docPropName])
+                        if not bFoundFileName:  # ASK ABOUT PERFORMANCE OF THIS TYPE OF IF STRUCTURE
+                            if docPropName == "FILENAME":
+                                docProps[docPropName] = prop.get('v').split("\\")[-1]  # only grab the file name and not the full path
+                                batchInfo["fileList"].add(docProps[docPropName])
+                                bFoundFileName = True
+                            else:
+                                docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]            
                         else:   
                             docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]
                         # Create a list of all unique doc prop names across both pre and post
@@ -585,25 +589,28 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
 
             # if pages > 1, document is split across multiple mongo objects and should be combined
             if document.get('pages') > 1:
-                if docId not in splitObjects:
-                    splitObjects[docId] = docProps
-                else: 
-                    splitObjects[docId].update(docProps)
-                    # Each time we find a split doc we need to subtract one from our total doc count  
+                splitObjects.setdefault(docId, {}).update(docProps)
+                #if docId not in splitObjects:
+                #    splitObjects[docId] = docProps
+                #else: 
+                #    splitObjects[docId].update(docProps)
+                # Each time we find a split doc we need to subtract one from our total doc count  
                 batchInfo[batchCount] -= 1
             else:
                 # Add to our OrderedDict with filename and docid as the key which can be used to properly sort objects
-                if docProps['FILENAME'] in batch[1]:
-                    batch[1][docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
-                else:
-                    batch[1][docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}        
+                batch[1].setdefault(docProps['FILENAME'], {}).update({docProps['DOCUMENTID']:docProps})
+                #if docProps['FILENAME'] in batch[1]:  # ASK ABOUT PERFORMANCE OF THIS TYPE OF IF STRUCTURE
+                #    batch[1][docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
+                #else:
+                #    batch[1][docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}        
 
         # clean up our splitObjects
         for documentId in splitObjects:
-            if splitObjects[documentId]['FILENAME'] in batch[1]:
-                batch[1][splitObjects[documentId]['FILENAME']].update({documentId:splitObjects[documentId]})
-            else:
-                batch[1][splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
+            batch[1].setdefault(splitObjects[documentId]['FILENAME'], {}).update({documentId:splitObjects[documentId]})
+            #if splitObjects[documentId]['FILENAME'] in batch[1]:
+            #    batch[1][splitObjects[documentId]['FILENAME']].update({documentId:splitObjects[documentId]})
+            #else:
+            #    batch[1][splitObjects[documentId]['FILENAME']] = {documentId:splitObjects[documentId]}
 
         preOrPost = "postchange"
         batchCount = "postBatchCount"
@@ -1703,13 +1710,13 @@ def run(argv):
     if len(argv) != 4:
         print("Command line arguments not given, using values hardcoded within run() function...")
 
-        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1ozF9JdyQyowL8bqckIlUnRM8Ht4FAs1BlBag5I4W1MU/edit#gid=0'
+        spreadsheetURL = 'https://docs.google.com/spreadsheets/d/1rvOMtucwaM5kD8j4GOxpHAMQnh0U064GMv8oUazq4Kw/edit#gid=0'
         spreadsheetId = spreadsheetURL.split('/')[-2]
 
-        arguments = {"custId"           : 2700,
-                     "preId"            : 13850375,
+        arguments = {"custId"           : 2546,
+                     "preId"            : 13850159,
                      "preEnv"           : "imdb", # imdb or reportdb, imdb should be default
-                     "postId"           : 13850375,
+                     "postId"           : 13849959,
                      "postEnv"          : "imdb", # imdb or reportdb, imdb should be default
                      "spreadsheetURL"   : spreadsheetURL,
                      "spreadsheetId"    : spreadsheetId,
