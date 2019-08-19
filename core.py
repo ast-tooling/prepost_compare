@@ -30,17 +30,22 @@ class PrePostComp(object):
         #   values: imdb, reportdb
         # -compareLogic
         #   desc: logic used to match docs across batches
-        #   values: docId, masterKey     
+        #   values: docId, masterKey 
+        # -noChangeCols and noChangeRows
+        #   desc: controls whether columns (doc props) and rows (pre/post pairs) that saw no change are included
+        #   values: show, hide, exclude    
         # -masterKeyProps
         #   desc: doc props that will be used to match docs across batches if compareLogic = docId
         #   values: props listed and any user defined properties from free-form text box   
-        optionalParams = {  'preEnv'        : 'imdb',
-                            'postEnv'       : 'imdb',
-                            'compareLogic'  : 'docId',
-                            'masterKeyProps': ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID'],
-                            'ignoredProps'  : ['FILEDATE', 'SIG_BMP', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1',
-                                               'BILLING_ADDRESS_BEG2','BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4',
-                                               'BILLING_ADDRESS_ZIP5', 'BILLING_ADDRESS_CITY', 'BILLING_ADDRESS_STATE', 'ROWIMG', 'JOB_ID']} 
+        optionalParams = {  'preEnv'            : 'imdb',
+                            'postEnv'           : 'imdb',
+                            'compareLogic'      : 'docId',
+                            'noChangeCols'      : 'hide', # hide and show work, except has not yet been implemented
+                            'noChangeRows'      : 'hide', # hide and show work, except has not yet been implemented
+                            'masterKeyProps'    : ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID'],
+                            'ignoredProps'      : ['FILEDATE', 'SIG_BMP', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1',
+                                                   'BILLING_ADDRESS_BEG2','BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4',
+                                                   'BILLING_ADDRESS_ZIP5', 'BILLING_ADDRESS_CITY', 'BILLING_ADDRESS_STATE', 'ROWIMG', 'JOB_ID']} 
 
         for param in optionalParams.keys():
             if param in kwargs:
@@ -50,16 +55,18 @@ class PrePostComp(object):
 
         # create arguments dict to pass to funcs
         self.arguments = {
-            'custId'        : self.csrId,
-            'preId'         : self.prechangeId,
-            'preEnv'        : self.preEnv,
-            'postId'        : self.postchangeId,
-            'postEnv'       : self.postEnv,
-            'spreadsheetURL': self.spreadsheetUrl,
-            'spreadSheetId' : self.spreadsheetId,
-            'compareLogic'  : self.compareLogic,
-            'masterKeyProps': self.masterKeyProps,
-            'ignoredProps'  : self.ignoredProps,
+            'custId'            : self.csrId,
+            'preId'             : self.prechangeId,
+            'preEnv'            : self.preEnv,
+            'postId'            : self.postchangeId,
+            'postEnv'           : self.postEnv,
+            'spreadsheetURL'    : self.spreadsheetUrl,
+            'spreadSheetId'     : self.spreadsheetId,
+            'compareLogic'      : self.compareLogic,
+            'noChangeCols'      : self.noChangeCols,
+            'noChangeRows'      : self.noChangeRows,            
+            'masterKeyProps'    : self.masterKeyProps,
+            'ignoredProps'      : self.ignoredProps,
         }
         # as a part of constructer, connect to databases
         self.mysqlClient = compare.InitSQLClient()

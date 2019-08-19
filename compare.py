@@ -446,7 +446,7 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo, arguments):
             print("Not able to find any doc prop keys in the prechange batch")
             print(str(count))
             sys.exit()
-        if True:
+        if False:
             if masterKey in masterPropList:
                 print("Found a duplicate masterkey within the prechange batch: ", masterKey)
                 print("Master key components:", '~'.join(arguments['masterKeyProps']))
@@ -670,7 +670,7 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
 
 
 
-    spreadSheetId = arguments['spreadsheetId']            
+    #spreadSheetId = arguments['spreadsheetId']            
     #UpdateSingleRange(masterPropList, "B2", "DP COMPARE 6", spreadSheetId)           
 
 
@@ -748,7 +748,8 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
     misMatchedPair = []
     dpValuesEqual = True
     dpNeCols = [] # cell range of dp labels to turn red
-    dpEqRows = []
+    noChangeHideRow = []
+    noChangeHideCol = []
     changedDocProps = {}
     numOfChangedPairs = 0
     compareNumber = 1
@@ -834,14 +835,14 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
             #AddCompFormatRule(service, "=D%s" % str(currentRowNum), endColIndex, currentRowNum)
             #####
             # Keep track of all rows that should be hidden because there was no change seen between pre and post for that pair
-            if dpRowEq:
-                if len(dpEqRows) > 0: # only check previous row if we have added at least one
-                    if dpEqRows[-1][1] == currentRowNum-1:
-                        dpEqRows[-1][1] = currentRowNum+1 # extend previous range by our current pair
+            if dpRowEq and arguments['noChangeRows'] == 'hide':
+                if len(noChangeHideRow) > 0: # only check previous row if we have added at least one
+                    if noChangeHideRow[-1][1] == currentRowNum-1:
+                        noChangeHideRow[-1][1] = currentRowNum+1 # extend previous range by our current pair
                     else:
-                        dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # start a new range
+                        noChangeHideRow.extend([[currentRowNum-1, currentRowNum+1]]) # start a new range
                 else:
-                    dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # add our first range
+                    noChangeHideRow.extend([[currentRowNum-1, currentRowNum+1]]) # add our first range
             currentRowNum += 2
             compareNumber += 1
             currentColIndex = 2 # rest col index after each pair is added to rows
@@ -917,10 +918,20 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
         requests = AddGrayBackground(misMatchedPair)
         SendUpdateRequests(service, requests, spreadsheetId)
 
-    print("Hiding rows that saw no change from pre to post...")
-    requests = HideNoChangeRows(dpEqRows, sheetId)
-    if requests != []:
-        SendUpdateRequests(service, requests, spreadsheetId)
+    if arguments['noChangeRows'] == 'hide':    
+        print("Hiding rows that saw no change from pre to post...")
+        requests = HideNoChangeRows(noChangeHideRow, sheetId)
+        if requests != []:
+            SendUpdateRequests(service, requests, spreadsheetId)
+
+    if arguments['noChangeCols'] == 'hide':
+        for currentColIndex in colIndexes:
+            if docPropLabels[currentColIndex-2] not in ("DOCUMENTID", "ACCOUNT_NUMBER", "INVOICE_NUMBER", "BT_ROUTE", ""):
+                    noChangeHideCol.append([currentColIndex -1, currentColIndex])               
+        print("Hiding cols that saw no change from pre to post...")
+        requests = HideNoChangeCols(noChangeHideCol, sheetId)
+        if requests != []:
+            SendUpdateRequests(service, requests, spreadsheetId)               
 
     #print("Adding summary information...")
     #summaryStatement = "Prechange Document Count: %s | Postchange Document Count: %s | Number of Mismatched Documents: %s | Number of Pairs with Change: %s" \
@@ -938,16 +949,16 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
 
     print("Start CreateDPCompareTab: %s" % (time.time() - startTime))
 
-    spreadSheetId = arguments['spreadsheetId']
+    spreadsheetId = arguments['spreadsheetId']
     rowCount = (len(masterPropList) * 2) + 2
-    addSheetResponse = SendUpdateRequests(service, AddCompareSheet(rowCount, spreadSheetId), spreadSheetId)
+    addSheetResponse = SendUpdateRequests(service, AddCompareSheet(rowCount, spreadsheetId), spreadsheetId)
     sheetId = addSheetResponse.get('replies')[0].get('addSheet').get('properties').get('sheetId')
     sheetName = str(addSheetResponse.get('replies')[0].get('addSheet').get('properties').get('title'))
 
     print("sheet id: ", sheetId)
     print("sheet name: ", sheetName)
 
-    UpdateSingleRange([docPropLabels], "B2", sheetName, spreadSheetId)
+    UpdateSingleRange([docPropLabels], "B2", sheetName, spreadsheetId)
     rows = []
     startRowNum = 3
     currentRowNum = 3
@@ -960,7 +971,7 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
     print ("Setting column widths...")
     #print("Time Elapsed: %s" % (time.time() - startTime))
     requests = SetAutoColumnWidth(startColIndex, endColIndex, sheetId)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
 
     #sys.exit()
 
@@ -981,7 +992,8 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
     dpValuesNe = []
     dpValuesEqual = True
     dpNeCols = [] # cell range of dp labels to turn red
-    dpEqRows = []
+    noChangeHideRow = []
+    noChangeHideCol = []
     misMatchedPair = []
     changedDocProps = {}
     numOfChangedPairs = 0
@@ -1023,6 +1035,7 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
                                                 "startRowIndex": startRowNum - 2,
                                                 "endRowIndex": startRowNum-1})
                             colIndexes.remove(currentColIndex)
+
                         if dpValuesEqual:
                             dpValuesNe.append({ "sheetId": sheetId,
                                                 "startColumnIndex": currentColIndex - 1 ,
@@ -1042,6 +1055,9 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
         # Reset bool for each pair
         dpValuesEqual = True
         # Build our 2D Array of row data
+        #if dpRowEq and arguments['noChangeRows'] == 'exclude':
+        #    pass
+        #else:    
         rows.append(row1)
         rows.append(row2)
 
@@ -1056,20 +1072,20 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
         #AddCompFormatRule(service, "=D%s" % str(currentRowNum), endColIndex, currentRowNum)
         #####
         # Keep track of all rows that should be hidden because there was no change seen between pre and post for that pair
-        if dpRowEq:
-            if len(dpEqRows) > 0: # only check previous row if we have added at least one
-                if dpEqRows[-1][1] == currentRowNum-1:
-                    dpEqRows[-1][1] = currentRowNum+1 # extend previous range by our current pair
+        if dpRowEq and arguments['noChangeRows'] == 'hide':
+            if len(noChangeHideRow) > 0: # only check previous row if we have added at least one
+                if noChangeHideRow[-1][1] == currentRowNum-1:
+                    noChangeHideRow[-1][1] = currentRowNum+1 # extend previous range by our current pair
                 else:
-                    dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # start a new range
+                    noChangeHideRow.extend([[currentRowNum-1, currentRowNum+1]]) # start a new range
             else:
-                dpEqRows.extend([[currentRowNum-1, currentRowNum+1]]) # add our first range
+                noChangeHideRow.extend([[currentRowNum-1, currentRowNum+1]]) # add our first range
         currentRowNum += 2
         compareNumber += 1
         currentColIndex = 2 # rest col index after each pair is added to rows
 
     # Add rows of data to sheet
-    UpdateSingleRange(rows, "A%s" % str(startRowNum), sheetName, spreadSheetId)
+    UpdateSingleRange(rows, "A%s" % str(startRowNum), sheetName, spreadsheetId)
     #print("Time Elapsed: %s" % (time.time() - startTime))
     # Set all dp cells to green to start
     print("Setting all cells to green...")
@@ -1079,12 +1095,12 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
                     "startRowIndex": startRowNum - 1,
                     "endRowIndex": currentRowNum}
     requests = AddGreenBackground(dpValuesEq)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
     # Now change all mismatched value pairs to red
     print("Changing cells to red...")
     if len(dpValuesNe) > 0:
         requests = AddRedBackground(dpValuesNe)
-        SendUpdateRequests(service, requests, spreadSheetId)
+        SendUpdateRequests(service, requests, spreadsheetId)
     else:
         print("No differences found between the two batchs...")
 
@@ -1095,41 +1111,51 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
                     "startRowIndex": startRowNum - 2,
                     "endRowIndex": startRowNum - 1}]
     requests = AddDPLabelBackground(dpEqCols, dpNeCols)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
 
     print ("Adding row borders...")
     requests = AddRowBorders(service, borderRange)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
 
     print ("Setting font to Calibri...")
     requests = SetFont(service, endColIndex, sheetId)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
     #print ("Adding conditional formatting rules for each document...")
     #requests = AddDPCompFormatRule(prechangeRange, postchangeRange)
     # Send conditional formatting requests
-    #SendUpdateRequests(service, requests, spreadSheetId)
+    #SendUpdateRequests(service, requests, spreadsheetId)
     # Send alternating colors request
     print("Adding alternating colors and batch information...")
-    SendUpdateRequests(service, AddAlternatingColors(sheetId), spreadSheetId)
+    SendUpdateRequests(service, AddAlternatingColors(sheetId), spreadsheetId)
     #changedDPIndexes = docProp
     #changedDocProps = [docPropLabels[i] for i in dpNeCols] # Get dp labels that saw a change in any pre/post pair
 
     AddChangedCellLink(changedDocProps, sheetId, sheetName, arguments)
 
     requests = AddBatchInformation(numOfPreDocs, numOfPostDocs, misMatchCount, numOfChangedPairs - misMatchCount, changedDocProps, sheetId, sheetName, arguments)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
 
     requests = AddPairColor(dpValuesNe, dpValuesEq, sheetId)
-    SendUpdateRequests(service, requests, spreadSheetId)
+    SendUpdateRequests(service, requests, spreadsheetId)
 
     if misMatchedPair != []:
         requests = AddGrayBackground(misMatchedPair)
-        SendUpdateRequests(service, requests, spreadSheetId)
+        SendUpdateRequests(service, requests, spreadsheetId)
 
-    print("Hiding rows that saw no change from pre to post...")
-    requests = HideNoChangeRows(dpEqRows, sheetId)
-    if requests != []:
-        SendUpdateRequests(service, requests, spreadSheetId)
+    if arguments['noChangeRows'] == 'hide':    
+        print("Hiding rows that saw no change from pre to post...")
+        requests = HideNoChangeRows(noChangeHideRow, sheetId)
+        if requests != []:
+            SendUpdateRequests(service, requests, spreadsheetId)
+
+    if arguments['noChangeCols'] == 'hide':
+        for currentColIndex in colIndexes:
+            if docPropLabels[currentColIndex-2] not in ("DOCUMENTID", "ACCOUNT_NUMBER", "INVOICE_NUMBER", "BT_ROUTE", ""):
+                    noChangeHideCol.append([currentColIndex -1, currentColIndex])               
+        print("Hiding cols that saw no change from pre to post...")
+        requests = HideNoChangeCols(noChangeHideCol, sheetId)
+        if requests != []:
+            SendUpdateRequests(service, requests, spreadsheetId)            
 
     #print("Adding summary information...")
     #summaryStatement = "Prechange Document Count: %s | Postchange Document Count: %s | Number of Mismatched Documents: %s | Number of Pairs with Change: %s" \
@@ -1599,14 +1625,35 @@ def AddBatchInformation(numOfPreDocs, numOfPostDocs, misMatchCount, numOfChanged
     return requests
 
 @fn_timer
-def HideNoChangeRows(dpEqRows, sheetId):
+def HideNoChangeRows(noChangeHideRow, sheetId):
     requests = []
-    for startIndex, endIndex in dpEqRows:
+    for startIndex, endIndex in noChangeHideRow:
         requests.append({
           'updateDimensionProperties': {
             "range": {
               "sheetId": sheetId,
               "dimension": 'ROWS',
+              "startIndex": startIndex,
+              "endIndex": endIndex,
+            },
+            "properties": {
+              "hiddenByUser": True,
+            },
+            "fields": 'hiddenByUser',
+        }})
+    #if requests != []:
+    #    SendUpdateRequests(service, requests, spreadSheetId)
+    return requests
+
+@fn_timer
+def HideNoChangeCols(noChangeHideCol, sheetId):
+    requests = []
+    for startIndex, endIndex in noChangeHideCol:
+        requests.append({
+          'updateDimensionProperties': {
+            "range": {
+              "sheetId": sheetId,
+              "dimension": 'COLUMNS',
               "startIndex": startIndex,
               "endIndex": endIndex,
             },
@@ -1714,13 +1761,15 @@ def run(argv):
         spreadsheetId = spreadsheetURL.split('/')[-2]
 
         arguments = {"custId"           : 2546,
-                     "preId"            : 13850159,
+                     "preId"            : 13849961,
                      "preEnv"           : "imdb", # imdb or reportdb, imdb should be default
-                     "postId"           : 13849959,
+                     "postId"           : 13850115,
                      "postEnv"          : "imdb", # imdb or reportdb, imdb should be default
                      "spreadsheetURL"   : spreadsheetURL,
                      "spreadsheetId"    : spreadsheetId,
-                     "compareLogic"     : "docId", # docId or masterKey
+                     "compareLogic"     : "masterKey", # docId or masterKey
+                     'noChangeCols'     : 'hide', # show, hide or exclude
+                     'noChangeRows'     : 'hide', # show, hide or exclude
                      'masterKeyProps'   : ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID'],
                      'ignoredProps'     : ['FILEDATE', 'FILE_PREFIX', 'SIG_BMP', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1', 'BILLING_ADDRESS_BEG2',
                                            'BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4', 'BILLING_ADDRESS_ZIP5', 'BILLING_ADDRESS_CITY',
@@ -1736,6 +1785,8 @@ def run(argv):
                      "spreadsheetURL"   : argv[3],
                      "spreadsheetId"    : spreadsheetId,
                      "compareLogic"     : "docId",
+                     'noChangeCols'     : 'hide',
+                     'noChangeRows'     : 'hide',
                      'masterKeyProps'   : ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID'],
                      'ignoredProps'     : ['FILEDATE', 'FILE_PREFIX', 'SIG_BMP', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1', 'BILLING_ADDRESS_BEG2',
                                            'BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4', 'BILLING_ADDRESS_ZIP5', 'BILLING_ADDRESS_CITY',
