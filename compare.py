@@ -39,7 +39,7 @@ def fn_timer(function):
     return function_timer
 
 @fn_timer
-def InitSQLClient():
+def InitSQLClient(dStack={},master=False):
     userName = os.getenv('username')
     sqlConnFile = r"C:\\Users\\%s\\AppData\\Roaming\\SQLyog\\sqlyog.ini" % userName
     inFile = open(sqlConnFile, 'rt')
@@ -71,21 +71,37 @@ def InitSQLClient():
 
     # SQLyog stores passwords with base 64 encoding so we must decode it
     decodedPassword = decode_password(password)
-
-    imdb_mysqlClient = mysql.connector.connect(
-        host="imdb",
-        user=userName,
-        passwd=decodedPassword,
-        database="imstage01"
-    )
-    reportdb_mysqlClient = mysql.connector.connect(
-        host="reportdb",
-        user=userName,
-        passwd=decodedPassword,
-        database="prod"
-    )
+    # TODO why are we connecting to both stage & prod, should it be a flag?
+    # TODO need to figure out a why to have users connect through webserver,
+    # probably be generic name
+    if master:
+        imdb_mysqlClient = mysql.connector.connect(
+            host="imdb",
+            user=userName,
+            passwd=decodedPassword,
+            database="billingmaster"
+        )
+        reportdb_mysqlClient = mysql.connector.connect(
+            host="reportdb",
+            user=userName,
+            passwd=decodedPassword,
+            database="billingmaster"
+        )
+    else:
+        imdb_mysqlClient = mysql.connector.connect(
+            host="imdb",
+            user=userName,
+            passwd=decodedPassword,
+            database=dStack['imdb']
+        )
+        reportdb_mysqlClient = mysql.connector.connect(
+            host="reportdb",
+            user=userName,
+            passwd=decodedPassword,
+            database=dStack['reportdb']
+        )
     mysqlClient =  {"imdb"      : imdb_mysqlClient,
-                    "reportdb"  : reportdb_mysqlClient}        
+                    "reportdb"  : reportdb_mysqlClient}
     return mysqlClient
 
 @fn_timer
@@ -130,8 +146,8 @@ def InitMongoClient():
     reportdb_fsidocprops = reportdb_MongoClient.docpropsdb.fsidocprops
 
     fsidocprops =  {"imdb"      : imdb_fsidocprops,
-                    "reportdb"  : reportdb_fsidocprops} 
-                    
+                    "reportdb"  : reportdb_fsidocprops}
+
     return fsidocprops
 
     # END: CONNECT TO MONGO CLIENT #
@@ -152,7 +168,7 @@ def InitSqlServerConn(server='dnco-stc2bsql.billtrust.local',database='carixData
     ##################################
 @fn_timer
 def decode_password(encoded):
-    print('encoded password is %s' % encoded)
+    # print('encoded password is %s' % encoded)
     # TODO, update '==' to check length of encoded var; should be multiple of 4
     # see https://gist.github.com/perrygeo/ee7c65bb1541ff6ac770
     if len(encoded) % 4 != 0:
@@ -176,7 +192,7 @@ def rotate_left(num, bits):
     return num
 @fn_timer
 def GetCoversheetDocIds(mysqlClient, arguments):
-    # We want to ignore any document that was created as a coversheet    
+    # We want to ignore any document that was created as a coversheet
     coversheetDocIds = {}
     preOrPost = "prechange"
     for args in ((arguments['preId'], arguments['preEnv']), (arguments['postId'], arguments['postEnv'])):
@@ -207,7 +223,7 @@ def GetFSIDocumnetInfo(mysqlClient, arguments):
                  "X" : "Fax"}
 
     fsiDocumentInfo = {}
-    preOrPost = "prechange" 
+    preOrPost = "prechange"
 
     for args in ((arguments['preId'], arguments['preEnv']), (arguments['postId'], arguments['postEnv'])):
 
@@ -224,11 +240,11 @@ def GetFSIDocumnetInfo(mysqlClient, arguments):
                                             "PAGECOUNT": str(document[3])}
         if batchInfo == {}:
             print("Did not find any record in fsidocument for customerId: %s, batchId: %s" % (arguments['custId'], arguments[0]))
-            sys.exit()                                        
-                                            
+            sys.exit()
+
         fsiDocumentInfo[preOrPost] = batchInfo
         preOrPost = "postchange"
-                                            
+
     return fsiDocumentInfo
 
 @fn_timer
@@ -296,7 +312,7 @@ def GetDocProps(fsidocprops, coversheetDocIds, arguments):
     #fsidocprops = arguments['preEnv']
     #print (arguments)
     #print (fsidocprops[arguments['preEnv']])
-    #pre_fsidocprops = fsidocprops[arguments['preEnv']]   
+    #pre_fsidocprops = fsidocprops[arguments['preEnv']]
     prechangeProps = fsidocprops[arguments['preEnv']].find({'batchId': arguments['preId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds['prechange']}})
     #fsidocprops = im_fsidocprops
     postchangeProps = fsidocprops[arguments['postEnv']].find({'batchId': arguments['postId'], 'customerId': arguments['custId'], 'documentId': {'$nin': coversheetDocIds['postchange']}})
@@ -431,7 +447,7 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo, arguments):
                     if prop == docProp.get('k'):
                         if prop == "FILENAME":
                             masterKey.append(docProp.get('v').split("\\")[-1])
-                        else:        
+                        else:
                             masterKey.append(docProp.get('v'))
         #print(masterKey)
         masterKey = '~'.join(masterKey)
@@ -467,7 +483,7 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo, arguments):
                         if propName == docPropLabel:
                             if propName == "FILENAME":
                                 tempPropValues[0] = prop.get('v').replace('<BR>', '\n')[:5000].split("\\")[-1]
-                            else:   
+                            else:
                                 tempPropValues[0] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
                             break
                 masterPropList[masterKey].append(tempPropValues)
@@ -487,8 +503,8 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo, arguments):
                     if prop == docProp.get('k'):
                         if prop == "FILENAME":
                             masterKey.append(docProp.get('v').split("\\")[-1])
-                        else:        
-                            masterKey.append(docProp.get('v'))                        
+                        else:
+                            masterKey.append(docProp.get('v'))
         masterKey = '~'.join(masterKey)
 
         # Exit if we were not able to find either account number or invoice number
@@ -516,11 +532,11 @@ def MergeBatchData(prechangeProps, postchangeProps, fsiDocumentInfo, arguments):
                     propName = prop.get('k')
                     if propName == docPropLabel:
                         if propName == "FILENAME":
-                            masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000].split("\\")[-1] 
-                        else:    
+                            masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000].split("\\")[-1]
+                        else:
                             masterPropList[masterKey][i][1] = prop.get('v').replace('<BR>', '\n')[:5000] #google sheets limits cell data to 5000 chars
                         break
-        if True:                
+        if True:
             if misMatchCount > ((len(prechangeProps) + len(postchangeProps)) / 4) \
               or misMatchCount > len(prechangeProps) * .75 \
               or misMatchCount > len(postchangeProps) * .75:
@@ -544,7 +560,7 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                  "postBatchCount"   : 0,
                  "misMatchCount"    : 0,
                  "fileList"         : set(),}
-    fileList = {}             
+    fileList = {}
     # Add all doc props from our prechange and postchange batches to a list of doc prop names
     preOrPost = "prechange"
     batchCount = "preBatchCount"
@@ -560,13 +576,13 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
             docId = str(document.get('documentId'))
             docProps['DOCUMENTID'] = docId
 
-            # Keep track of how many documents are in each batch  
+            # Keep track of how many documents are in each batch
             batchInfo[batchCount] += 1
- 
+
             for prop in document.get('properties'):
                 docPropName = prop.get('k').strip()
                 if docPropName: # Do not add columnar properties or special biscuit generated properties.. XML_DATA was causing a failure
-                    if "s" in prop: # Once we find the first columnar property we can break 
+                    if "s" in prop: # Once we find the first columnar property we can break
                         #print("Found first col prop, breaking properties loop at: %s, Line: %s" % (docPropName, prop.get('s')))
                         break
                     elif docPropName not in arguments['ignoredProps']:
@@ -576,8 +592,8 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                                 batchInfo["fileList"].add(docProps[docPropName])
                                 bFoundFileName = True
                             else:
-                                docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]            
-                        else:   
+                                docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]
+                        else:
                             docProps[docPropName] = prop.get('v').replace('<BR>', '\n')[:5000]
                         # Create a list of all unique doc prop names across both pre and post
                         if docPropName not in docPropLabels:
@@ -592,9 +608,9 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                 splitObjects.setdefault(docId, {}).update(docProps)
                 #if docId not in splitObjects:
                 #    splitObjects[docId] = docProps
-                #else: 
+                #else:
                 #    splitObjects[docId].update(docProps)
-                # Each time we find a split doc we need to subtract one from our total doc count  
+                # Each time we find a split doc we need to subtract one from our total doc count
                 batchInfo[batchCount] -= 1
             else:
                 # Add to our OrderedDict with filename and docid as the key which can be used to properly sort objects
@@ -602,7 +618,7 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                 #if docProps['FILENAME'] in batch[1]:  # ASK ABOUT PERFORMANCE OF THIS TYPE OF IF STRUCTURE
                 #    batch[1][docProps['FILENAME']].update({docProps['DOCUMENTID']:docProps})
                 #else:
-                #    batch[1][docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}        
+                #    batch[1][docProps['FILENAME']] = {docProps['DOCUMENTID']:docProps}
 
         # clean up our splitObjects
         for documentId in splitObjects:
@@ -648,7 +664,7 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                     if docPropLabel in postchangeProps[fileName][docId]:
                         propList.append(postchangeProps[fileName][docId][docPropLabel])
                     else:
-                        propList.append("")       
+                        propList.append("")
                 masterPropList[i] = propList
                 i += 2
 
@@ -663,15 +679,15 @@ def MergeToDataFrame(prechangePropsGen, postchangePropsGen, fsiDocumentInfo, arg
                         propList.append(postchangeProps[fileName][docId][docPropLabel])
                     else:
                         propList.append("")
-                print(i)               
+                print(i)
                 masterPropList.extend([[],propList])
-                #i += 2                        
+                #i += 2
 
 
 
 
-    #spreadSheetId = arguments['spreadsheetId']            
-    #UpdateSingleRange(masterPropList, "B2", "DP COMPARE 6", spreadSheetId)           
+    #spreadSheetId = arguments['spreadsheetId']
+    #UpdateSingleRange(masterPropList, "B2", "DP COMPARE 6", spreadSheetId)
 
 
     #sys.exit()
@@ -709,7 +725,7 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
     #updated = existing.append(masterPropList)
     #gd.set_with_dataframe(ws, updated)
 
-    #sys.exit()   
+    #sys.exit()
 
     rows = []
     startRowNum = 3
@@ -726,9 +742,9 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
     #print("Time Elapsed: %s" % (time.time() - startTime))
     requests = SetAutoColumnWidth(startColIndex, endColIndex, sheetId)
     SendUpdateRequests(service, requests, spreadsheetId)
-    
+
     # Add docprop values to new tab
-    UpdateSingleRange(masterPropList, "B3", sheetName, spreadsheetId)    
+    UpdateSingleRange(masterPropList, "B3", sheetName, spreadsheetId)
 
     prechangeRange = []
     postchangeRange = []
@@ -782,7 +798,7 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
                                                         "endColumnIndex": endColIndex,
                                                         "startRowIndex": startRowNum - 2,
                                                         "endRowIndex": startRowNum})
-                                break    
+                                break
                             dpRowEq = False
                             # Store a list of all doc props that were changed
                             if docPropLabels[currentColIndex-2] not in changedDocProps:
@@ -813,7 +829,7 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
                         dpValuesEqual = True
                 currentColIndex += 1
 
-            #############################    
+            #############################
 
             # used for summary statement at top of page
             if not dpRowEq:
@@ -850,7 +866,7 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
             #######################################
 
     # Add compare index numbers to column A
-    UpdateSingleRange(compareNumbers, "A3", sheetName, spreadsheetId)    
+    UpdateSingleRange(compareNumbers, "A3", sheetName, spreadsheetId)
 
     # Add rows of data to sheet
     #UpdateSingleRange(rows, "A%s" % str(startRowNum), sheetName)
@@ -862,7 +878,7 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
                     "endColumnIndex": endColIndex,
                     "startRowIndex": startRowNum - 1,
                     "endRowIndex": currentRowNum - 1}
-             
+
     requests = AddGreenBackground(dpValuesEq)
     SendUpdateRequests(service, requests, spreadsheetId)
     # Now change all mismatched value pairs to red
@@ -918,7 +934,7 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
         requests = AddGrayBackground(misMatchedPair)
         SendUpdateRequests(service, requests, spreadsheetId)
 
-    if arguments['noChangeRows'] == 'hide':    
+    if arguments['noChangeRows'] == 'hide':
         print("Hiding rows that saw no change from pre to post...")
         requests = HideNoChangeRows(noChangeHideRow, sheetId)
         if requests != []:
@@ -927,11 +943,11 @@ def CreateCompareTab(docPropLabels, masterPropList, batchInfo, arguments):
     if arguments['noChangeCols'] == 'hide':
         for currentColIndex in colIndexes:
             if docPropLabels[currentColIndex-2] not in ("DOCUMENTID", "ACCOUNT_NUMBER", "INVOICE_NUMBER", "BT_ROUTE", ""):
-                    noChangeHideCol.append([currentColIndex -1, currentColIndex])               
+                    noChangeHideCol.append([currentColIndex -1, currentColIndex])
         print("Hiding cols that saw no change from pre to post...")
         requests = HideNoChangeCols(noChangeHideCol, sheetId)
         if requests != []:
-            SendUpdateRequests(service, requests, spreadsheetId)               
+            SendUpdateRequests(service, requests, spreadsheetId)
 
     #print("Adding summary information...")
     #summaryStatement = "Prechange Document Count: %s | Postchange Document Count: %s | Number of Mismatched Documents: %s | Number of Pairs with Change: %s" \
@@ -1018,8 +1034,8 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
                                             "endColumnIndex": endColIndex,
                                             "startRowIndex": currentRowNum - 1,
                                             "endRowIndex": currentRowNum + 1})
-                else:                                            
-                    if docPropLabels[currentColIndex-2] != "DOCUMENTID" and not misMatched:              
+                else:
+                    if docPropLabels[currentColIndex-2] != "DOCUMENTID" and not misMatched:
                         dpRowEq = False
                         # Store a list of all doc props that were changed
                         if docPropLabels[currentColIndex-2] not in changedDocProps:
@@ -1057,7 +1073,7 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
         # Build our 2D Array of row data
         #if dpRowEq and arguments['noChangeRows'] == 'exclude':
         #    pass
-        #else:    
+        #else:
         rows.append(row1)
         rows.append(row2)
 
@@ -1142,7 +1158,7 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
         requests = AddGrayBackground(misMatchedPair)
         SendUpdateRequests(service, requests, spreadsheetId)
 
-    if arguments['noChangeRows'] == 'hide':    
+    if arguments['noChangeRows'] == 'hide':
         print("Hiding rows that saw no change from pre to post...")
         requests = HideNoChangeRows(noChangeHideRow, sheetId)
         if requests != []:
@@ -1151,11 +1167,11 @@ def CreateDPCompareTab(docPropLabels, masterPropList, misMatchCount, numOfPreDoc
     if arguments['noChangeCols'] == 'hide':
         for currentColIndex in colIndexes:
             if docPropLabels[currentColIndex-2] not in ("DOCUMENTID", "ACCOUNT_NUMBER", "INVOICE_NUMBER", "BT_ROUTE", ""):
-                    noChangeHideCol.append([currentColIndex -1, currentColIndex])               
+                    noChangeHideCol.append([currentColIndex -1, currentColIndex])
         print("Hiding cols that saw no change from pre to post...")
         requests = HideNoChangeCols(noChangeHideCol, sheetId)
         if requests != []:
-            SendUpdateRequests(service, requests, spreadsheetId)            
+            SendUpdateRequests(service, requests, spreadsheetId)
 
     #print("Adding summary information...")
     #summaryStatement = "Prechange Document Count: %s | Postchange Document Count: %s | Number of Mismatched Documents: %s | Number of Pairs with Change: %s" \
@@ -1781,7 +1797,7 @@ def run(argv):
                      "preId"            : int(argv[1]),
                      "preEnv"           : "imdb", # imdb or reportdb, imdb should be default
                      "postId"           : int(argv[2]),
-                     "postEnv"          : "imdb", # imdb or reportdb, imdb should be default                     
+                     "postEnv"          : "imdb", # imdb or reportdb, imdb should be default
                      "spreadsheetURL"   : argv[3],
                      "spreadsheetId"    : spreadsheetId,
                      "compareLogic"     : "docId",
@@ -1813,7 +1829,7 @@ def run(argv):
     fsidocprops = InitMongoClient()
 
     # masterKey compareLogic creates a unique identifier based on doc prop values in order to make documents in the prechange
-    # to their respective document in the postchange batch 
+    # to their respective document in the postchange batch
     if arguments["compareLogic"] == "masterKey":
         prePostDocProps = GetDocProps(fsidocprops, coversheetDocIds, arguments)
         # Merge pre and post batches, returns list = [docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs]
@@ -1823,7 +1839,7 @@ def run(argv):
 
     # docId compareLogic matches prechange docs to postchange by using documentId, the lowest docId from pre batch matches
     # the lowest docId from post batch
-    elif arguments["compareLogic"] == "docId":    
+    elif arguments["compareLogic"] == "docId":
         prePostDocProps = QueryMongo(fsidocprops, coversheetDocIds, arguments)
         # Merge pre and post batches, returns list = [docPropLabels, masterPropList, misMatchCount, numOfPreDocs, numOfPostDocs]
         mergedData = MergeToDataFrame(prePostDocProps[0], prePostDocProps[1], fsiDocumentInfo, arguments)
