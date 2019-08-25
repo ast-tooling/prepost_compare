@@ -40,8 +40,8 @@ class PrePostComp(object):
         optionalParams = {  'preEnv'            : 'imdb',
                             'postEnv'           : 'imdb',
                             'compareLogic'      : 'docId',
-                            'noChangeCols'      : 'hide', # hide and show work, except has not yet been implemented
-                            'noChangeRows'      : 'hide', # hide and show work, except has not yet been implemented
+                            'noChangeCols'      : 'hide', # hide and show work, exclude has not yet been implemented
+                            'noChangeRows'      : 'hide', # hide and show work, exclude has not yet been implemented
                             'masterKeyProps'    : ['ACCOUNT_NUMBER', 'INVOICE_NUMBER', 'TOTAL_DUE', 'BT_ROUTE', 'FFDID'],
                             'ignoredProps'      : ['FILEDATE', 'SIG_BMP', 'FILE_PREFIX', 'XML_DATA', 'BT_PRINT_FILE_NAME', 'BILLING_ADDRESS_BEG1',
                                                    'BILLING_ADDRESS_BEG2','BILLING_ADDRESS_END1', 'BILLING_ADDRESS_END2', 'BILLING_ADDRESS_ZIP4',
