@@ -11,7 +11,7 @@ gspread-dataframe==3.0.2
 httplib2==0.13.0
 idna==2.8
 mysql-connector==2.2.9
-numpy==1.16.4
+numpy==1.22.0
 oauthlib==3.0.1
 pandas==0.24.2
 pyasn1==0.4.5
